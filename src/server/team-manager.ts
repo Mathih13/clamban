@@ -235,13 +235,18 @@ When spawning workers via the Task tool:
 - Set the working directory context to: ${projectDir}
 - Give them the task title, description, and file context from the board task
 - IMPORTANT: Include these instructions in every worker prompt so they can update the board directly:
-  "Post progress comments to the board using: curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/comments -H 'Content-Type: application/json' -d '{\"author\":\"YOUR_NAME\",\"text\":\"Your update here\"}'
+  ## Board Interaction
+  Post progress comments to the board using: curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/comments -H 'Content-Type: application/json' -d '{\"author\":\"YOUR_NAME\",\"text\":\"Your update here\"}'
   Post a comment when you start work, when you hit blockers, and when you finish with a summary of changes made.
+
+  ## File Context
   When you create or modify important files (especially docs, configs, markdown, or new source files), attach them to the task:
   curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/context -H 'Content-Type: application/json' -d '{\"path\":\"relative/path/to/file.md\",\"note\":\"Brief description of this file\"}'
-  If you discover a bug, follow-up work, or prerequisite while working, create a new task and link it:
-  curl -s -X POST http://localhost:${port}/api/tasks -H 'Content-Type: application/json' -d '{\"title\":\"Bug title\",\"description\":\"Details\",\"column\":\"backlog\",\"priority\":\"medium\",\"type\":\"bug\",\"tags\":[]}'
-  Then link it: curl -s -X POST http://localhost:${port}/api/tasks/NEW_TASK_ID/refs -H 'Content-Type: application/json' -d '{\"taskId\":\"TASK_ID\",\"type\":\"related\"}'
+
+  ## Creating New Tasks
+  This is important: do NOT try to do everything in one session. If this task is too large, if you discover a bug, or if there is follow-up work, create a new task on the board and link it. This is how the team learns and tracks work — always leave breadcrumbs.
+  Create a task: curl -s -X POST http://localhost:${port}/api/tasks -H 'Content-Type: application/json' -d '{\"title\":\"Bug title\",\"description\":\"Details\",\"column\":\"backlog\",\"priority\":\"medium\",\"type\":\"bug\",\"tags\":[]}'
+  Link it to the current task: curl -s -X POST http://localhost:${port}/api/tasks/NEW_TASK_ID/refs -H 'Content-Type: application/json' -d '{\"taskId\":\"TASK_ID\",\"type\":\"related\"}'
   "
 - Replace TASK_ID and YOUR_NAME with the actual task ID and worker name in the prompt you give them
 
@@ -252,6 +257,7 @@ When spawning workers via the Task tool:
 - Be concise in comments
 - Process highest priority tasks first
 - You can spawn multiple workers in parallel for independent tasks
+- Proactively create new tasks when you notice follow-up work, bugs, or improvements — don't let knowledge get lost
 
 Start by fetching the board now.`;
 }
