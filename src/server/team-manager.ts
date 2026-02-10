@@ -315,7 +315,7 @@ export function startTeam(
 
   ensureDir(LOGS_DIR);
   const logPath = getLogFilePath(config.teamName);
-  const logStream = fs.createWriteStream(logPath, { flags: "a" });
+  const logStream = fs.createWriteStream(logPath, { flags: "w" });
   logStream.write(`\n--- Team lead started at ${new Date().toISOString()} ---\n`);
 
   leadProcess = spawn(
