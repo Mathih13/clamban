@@ -12,7 +12,7 @@ The key insight: by scoping context to individual tasks and using comments, file
 
 - **Node.js** 18+
 - **Claude Code CLI** installed and authenticated (`claude` command available)
-- An existing **Claude team** in `~/.claude/teams/`
+- An existing **Claude team** in `~/.claude/teams/` (teams is an [experimental feature](https://code.claude.com/docs/en/agent-teams))
 
 ## Getting Started
 
