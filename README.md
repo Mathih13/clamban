@@ -35,7 +35,7 @@ Open the URL shown in your terminal (default: `http://localhost:5173`).
 
 **Agent orchestration** — When you connect a team and hit Start, Clamban spawns a `claude` CLI process as the team lead. This agent reads the board state via the HTTP API, triages tasks, spawns worker agents, and writes results back — creating a shared collaboration loop between humans and AI.
 
-The Claude CLI is spawned with `--dangerously-skip-permissions`, which allows it to execute code, run commands, and modify files without confirmation prompts. **This flag is required for autonomous operation but means the agents can take any action on your system.** Run Clamban in an environment where you're comfortable with that (e.g., a container or VM for untrusted workloads).
+The Claude CLI is spawned with `--dangerously-skip-permissions`, which allows it to execute code, run commands, and modify files without confirmation prompts. **This flag is required because the CLI runs in non-interactive pipe mode — there is no terminal for a user to approve permission prompts, so without it the agent would hang on the first tool call.** This means the agents can take any action on your system. Run Clamban in an environment where you're comfortable with that (e.g., a container or VM for untrusted workloads).
 
 ## Data Storage
 
