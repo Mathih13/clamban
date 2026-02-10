@@ -4,7 +4,7 @@ A Kanban board that runs a Claude Code agent team to autonomously triage, assign
 
 LLMs perform best in a "Goldilocks zone" of context. Give an AI too little information and it won't know how its changes impact the rest of the code. Give it too much and watch it hallucinate changes you never asked for. But when it gets it just right, you save hours if not days of work.
 
-Techniques like [Ralphing](https://www.reddit.com/r/ClaudeAI/comments/1kwiqai/introducing_the_ralph_loop/) address this by decomposing work into small, scoped tasks — but the Ralph loop is relatively static: the developer defines all tasks in a batch, and learning from previous steps is left to the human to feed back in. This is the same problem Agile poses against Waterfall: it's better to try and learn iteratively than to hope you get everything right the first time. That's why we use sprints, feedback loops, ticket comments, and CI/CD — these tools capture learning for future work.
+Techniques like [Ralphing](https://www.reddit.com/r/ClaudeAI/comments/1kwiqai/introducing_the_ralph_loop/) address this by decomposing work into small, scoped tasks — but the Ralph loop is relatively static: the developer defines all tasks in a batch, and learning from previous steps is left to the human to feed back in.
 
 Clamban combines Ralphing-style task decomposition with a Kanban board where a team lead agent continuously monitors the board, triages backlog tasks, assigns them to worker agents, and moves cards through columns — while humans retain full visibility and control.
 
