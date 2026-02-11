@@ -55,8 +55,23 @@ export async function handleRoute(
   const method = req.method || "GET";
 
   // GET /api/board
-  if (method === "GET" && url === "/api/board") {
+  const parsedUrl = new URL(url, "http://localhost");
+  if (method === "GET" && parsedUrl.pathname === "/api/board") {
     const board = readBoard();
+
+    if (parsedUrl.searchParams.get("excludeDone") === "true") {
+      const nonDoneTasks = board.tasks.filter((t) => t.column !== "done");
+      const referencedIds = new Set<string>();
+      for (const t of nonDoneTasks) {
+        for (const ref of t.refs ?? []) {
+          referencedIds.add(ref.taskId);
+        }
+      }
+      board.tasks = board.tasks.filter(
+        (t) => t.column !== "done" || referencedIds.has(t.id)
+      );
+    }
+
     json(res, 200, board);
     return true;
   }
