@@ -361,7 +361,7 @@ export async function handleRoute(
       teamName: (body.teamName as string) || "",
       projectDir: (body.projectDir as string) || "",
       model: (body.model as string) || "sonnet",
-      maxTurns: (body.maxTurns as number) || 200,
+      maxTurns: (body.maxTurns as number) || 1000,
     };
 
     if (!teamConfig.teamName || !teamConfig.projectDir) {
