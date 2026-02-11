@@ -19,9 +19,19 @@ function getLogFilePath(teamName: string): string {
   return path.join(LOGS_DIR, `${teamName}.log`);
 }
 
+// --- Event-driven state machine ---
+// STOPPED: teamActive=false, no process, ignore board events
+// IDLE:    teamActive=true, no process, listening for board changes
+// RUNNING: teamActive=true, process active
 let leadProcess: ChildProcess | null = null;
-let respawnTimer: ReturnType<typeof setTimeout> | null = null;
-let manualStop = false;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let teamActive = false;
+let pendingBoardChange = false;
+let lastSpawnTime = 0;
+let totalTurnsUsed = 0;
+let currentConfig: TeamConfig | null = null;
+let currentPort = 0;
+let currentOnExit: (() => void) | undefined;
 
 function isPidAlive(pid: number): boolean {
   try {
@@ -37,9 +47,10 @@ function getPersistedPid(teamName: string): number | undefined {
   return state.leadPid as number | undefined;
 }
 
-/** Check if team is running — handles both in-memory ref and orphaned PIDs after HMR */
+/** Team is active if teamActive flag is set, or a process is still alive after HMR */
 function checkRunning(teamName: string): boolean {
-  if (leadProcess !== null && !leadProcess.killed) return true;
+  if (teamActive) return true;
+  // Fallback for HMR: check persisted PID
   const pid = getPersistedPid(teamName);
   return pid !== undefined && isPidAlive(pid);
 }
@@ -134,7 +145,7 @@ export function buildLeadPrompt(teamName: string, projectDir: string, port: numb
 
   return `You are the team lead for team "${teamName}". You manage a kanban board via HTTP API at http://localhost:${port}.
 
-Your job is to poll the board and manage tasks through their lifecycle. You work autonomously.
+Your job is to process the board and manage tasks through their lifecycle. You work autonomously.
 
 ## Team Members
 These are the workers on your team. ALWAYS assign tasks to one of these names:
@@ -145,7 +156,7 @@ Do NOT invent new worker names. Use the exact names listed above when setting th
 ## API Reference
 
 Fetch board:
-  curl -s http://localhost:${port}/api/board
+  curl -s 'http://localhost:${port}/api/board?excludeDone=true'
 
 Move task from backlog to ready:
   curl -s -X PATCH http://localhost:${port}/api/tasks/TASK_ID -H 'Content-Type: application/json' -d '{"column":"ready"}'
@@ -195,13 +206,13 @@ Review completed work:
 For each backlog task, sorted by priority (critical > high > medium > low):
 1. Read the task title, description, and priority
 2. Add a triage comment with your assessment: estimated effort, importance, any questions
-3. On a LATER poll (NOT the same poll where you commented), if the task warrants work based on its priority and your assessment, promote it:
+3. Do NOT promote in the same cycle — just triage. The triage comment will trigger a board change, which will re-invoke you automatically.
+4. On a SUBSEQUENT cycle, if the task warrants work based on its priority and your assessment, promote it:
    - PATCH column to "ready"
    - Add a comment: "Promoting to ready — {brief reason}"
-4. Do NOT comment AND promote in the same poll cycle — always triage first, promote later
 
 Guidelines for promoting:
-- Critical/high priority: promote on the next poll after triage
+- Critical/high priority: promote on the next cycle after triage
 - Medium priority: promote when no critical/high tasks are pending
 - Low priority: only promote when the board is otherwise clear
 
@@ -223,11 +234,12 @@ Always link new tasks to the related existing task using the refs API. Set the p
 - "medium" — standard work
 - "low" — nice-to-have, tech debt, cleanup
 
-## Polling Loop
-1. Fetch the board: curl -s http://localhost:${port}/api/board
+## Single Cycle
+1. Fetch the board: curl -s 'http://localhost:${port}/api/board?excludeDone=true'
 2. Process each column as described above
-3. Wait ~30 seconds, then poll again
-4. ALWAYS keep polling — new tasks may appear in backlog at any time. Only stop when you reach your max turns limit.
+3. After all actions, you are DONE — exit normally
+4. Do NOT loop or wait. Process the board once and stop.
+5. You will be re-invoked automatically when the board changes.
 
 ## Worker Spawning
 When spawning workers via the Task tool:
@@ -306,23 +318,33 @@ function formatStreamEvent(event: Record<string, unknown>): string | null {
   return null;
 }
 
-export function startTeam(
-  config: TeamConfig,
-  port: number,
-  onExit?: () => void
-): { pid: number } {
-  if (checkRunning(config.teamName)) {
-    throw new Error("Team is already running");
+function spawnCycle(): void {
+  if (!currentConfig) return;
+
+  const config = currentConfig;
+  const port = currentPort;
+  const maxTurns = config.maxTurns || 1000;
+  const remainingBudget = maxTurns - totalTurnsUsed;
+
+  if (remainingBudget <= 0) {
+    console.log(`[clamban] Turn budget exhausted (${totalTurnsUsed}/${maxTurns}), auto-stopping team`);
+    teamActive = false;
+    persistState(config.teamName, { leadPid: undefined, stoppedAt: new Date().toISOString() });
+    currentOnExit?.();
+    return;
   }
 
   const model = config.model || "sonnet";
-  const maxTurns = config.maxTurns || 200;
+  const cycleTurns = Math.min(50, remainingBudget);
   const prompt = buildLeadPrompt(config.teamName, config.projectDir, port);
 
   ensureDir(LOGS_DIR);
   const logPath = getLogFilePath(config.teamName);
-  const logStream = fs.createWriteStream(logPath, { flags: "w" });
-  logStream.write(`\n--- Team lead started at ${new Date().toISOString()} ---\n`);
+  const logStream = fs.createWriteStream(logPath, { flags: "a" });
+  logStream.write(`\n--- Cycle started at ${new Date().toISOString()} (turns used: ${totalTurnsUsed}/${maxTurns}, budget: ${cycleTurns}) ---\n`);
+
+  lastSpawnTime = Date.now();
+  pendingBoardChange = false;
 
   leadProcess = spawn(
     "claude",
@@ -330,7 +352,7 @@ export function startTeam(
       "-p",
       "--dangerously-skip-permissions",
       "--model", model,
-      "--max-turns", String(maxTurns),
+      "--max-turns", String(cycleTurns),
       "--output-format", "stream-json",
       "--verbose",
     ],
@@ -358,6 +380,10 @@ export function startTeam(
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line);
+          // Accumulate turns from result events
+          if (event.type === "result" && typeof event.num_turns === "number") {
+            totalTurnsUsed += event.num_turns;
+          }
           const logLine = formatStreamEvent(event);
           if (logLine) {
             logStream.write(logLine + "\n");
@@ -383,45 +409,90 @@ export function startTeam(
   });
 
   leadProcess.on("exit", (code) => {
-    logStream.write(`\n--- Team lead exited with code ${code} at ${new Date().toISOString()} ---\n`);
+    logStream.write(`\n--- Cycle exited with code ${code} at ${new Date().toISOString()} (total turns: ${totalTurnsUsed}) ---\n`);
     logStream.end();
     leadProcess = null;
 
     persistState(teamName, {
       leadPid: undefined,
-      stoppedAt: new Date().toISOString(),
+      stoppedAt: undefined,
     });
 
-    // Respawn logic: only if not manually stopped
-    if (!manualStop) {
-      const board = readBoard();
-      const hasWork = board.tasks.some(
-        (t) => t.column === "ready" || t.column === "in-progress"
-      );
-
-      if (hasWork && board.meta.team) {
-        respawnTimer = setTimeout(() => {
-          respawnTimer = null;
-          try {
-            startTeam(board.meta.team!, port, onExit);
-          } catch {}
-        }, 5000);
-      }
+    // Team was stopped while process was running
+    if (!teamActive) {
+      persistState(teamName, { stoppedAt: new Date().toISOString() });
+      currentOnExit?.();
+      return;
     }
-    manualStop = false;
 
-    onExit?.();
+    // Crash guard: process exited < 5s after spawn
+    const elapsed = Date.now() - lastSpawnTime;
+    if (elapsed < 5000) {
+      logStream.write?.(""); // no-op, stream already ended
+      console.warn(`[clamban] Cycle exited in ${elapsed}ms (< 5s), not respawning — possible crash`);
+      currentOnExit?.();
+      return;
+    }
+
+    // Turn budget exhausted
+    const maxT = config.maxTurns || 1000;
+    if (totalTurnsUsed >= maxT) {
+      console.log(`[clamban] Turn budget exhausted (${totalTurnsUsed}/${maxT}), auto-stopping team`);
+      teamActive = false;
+      persistState(teamName, { stoppedAt: new Date().toISOString() });
+      currentOnExit?.();
+      return;
+    }
+
+    // Board changed while we were running — respawn after short debounce
+    if (pendingBoardChange) {
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        spawnCycle();
+      }, 1000);
+      currentOnExit?.();
+      return;
+    }
+
+    // Nothing pending — go idle, wait for next board-change event
+    currentOnExit?.();
   });
+}
 
-  return { pid };
+export function startTeam(
+  config: TeamConfig,
+  port: number,
+  onExit?: () => void
+): { pid: number } {
+  if (checkRunning(config.teamName)) {
+    throw new Error("Team is already running");
+  }
+
+  // Reset state for fresh start
+  teamActive = true;
+  totalTurnsUsed = 0;
+  pendingBoardChange = false;
+  currentConfig = config;
+  currentPort = port;
+  currentOnExit = onExit;
+
+  // Truncate log on fresh start
+  ensureDir(LOGS_DIR);
+  fs.writeFileSync(getLogFilePath(config.teamName), "");
+
+  // Spawn first cycle immediately
+  spawnCycle();
+
+  return { pid: leadProcess?.pid ?? 0 };
 }
 
 export function stopTeam(teamName: string): void {
-  manualStop = true;
+  teamActive = false;
+  pendingBoardChange = false;
 
-  if (respawnTimer) {
-    clearTimeout(respawnTimer);
-    respawnTimer = null;
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
   }
 
   if (leadProcess && !leadProcess.killed) {
@@ -447,6 +518,7 @@ export function stopTeam(teamName: string): void {
   }
 
   leadProcess = null;
+  currentConfig = null;
   persistState(teamName, {
     leadPid: undefined,
     stoppedAt: new Date().toISOString(),
@@ -455,6 +527,26 @@ export function stopTeam(teamName: string): void {
 
 export function isTeamRunning(teamName: string): boolean {
   return checkRunning(teamName);
+}
+
+/** Called when board.json changes — triggers a new cycle if team is active */
+export function notifyBoardChanged(): void {
+  if (!teamActive) return;
+
+  // Process is running — flag it so we respawn after exit
+  if (leadProcess && !leadProcess.killed) {
+    pendingBoardChange = true;
+    return;
+  }
+
+  // Idle — debounce 3s then spawn a new cycle
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null;
+    if (teamActive && !leadProcess) {
+      spawnCycle();
+    }
+  }, 3000);
 }
 
 export function listAvailableTeams(): string[] {

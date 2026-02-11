@@ -3,7 +3,7 @@ import type { ServerResponse } from "http";
 import fs from "fs";
 import { handleRoute, onTeamChanged, setServerPort } from "./routes";
 import { getBoardPath, readBoard } from "./board-store";
-import { getTeamConfigDir, getTeamInboxDir } from "./team-manager";
+import { getTeamConfigDir, getTeamInboxDir, notifyBoardChanged } from "./team-manager";
 
 export function apiPlugin(): Plugin {
   const sseClients = new Set<ServerResponse>();
@@ -85,6 +85,7 @@ export function apiPlugin(): Plugin {
       server.watcher.on("change", (changedPath) => {
         if (changedPath === watchedBoardPath) {
           broadcast({ type: "board-changed" });
+          notifyBoardChanged();
         }
       });
 
