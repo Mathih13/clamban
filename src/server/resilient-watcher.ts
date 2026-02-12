@@ -1,0 +1,116 @@
+import fs from "fs";
+
+export interface WatcherOptions {
+  /** Directories to ensure exist before watching */
+  directories: string[];
+  /** Callback when any watched path changes */
+  onChange: (dir: string) => void;
+  /** Heartbeat timeout in ms — re-init watchers if no events arrive within this window. 0 = disabled. */
+  heartbeatTimeoutMs?: number;
+  /** Whether to watch recursively (for subdirectories like inboxes/) */
+  recursive?: boolean;
+}
+
+export interface ResilientWatcher {
+  /** Start watching (pre-creates dirs, sets up watchers + heartbeat) */
+  start(): void;
+  /** Stop all watchers and timers */
+  stop(): void;
+  /** Notify the watcher that an event was received externally (resets heartbeat) */
+  heartbeat(): void;
+  /** True if watchers are currently active */
+  readonly active: boolean;
+  /** Number of times watchers have been re-initialized due to heartbeat timeout */
+  readonly reinitCount: number;
+}
+
+export function createResilientWatcher(options: WatcherOptions): ResilientWatcher {
+  const {
+    directories,
+    onChange,
+    heartbeatTimeoutMs = 0,
+    recursive = false,
+  } = options;
+
+  let watchers: fs.FSWatcher[] = [];
+  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  let isActive = false;
+  let _reinitCount = 0;
+
+  function ensureDirectories(): void {
+    for (const dir of directories) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    }
+  }
+
+  function initWatchers(): void {
+    teardownWatchers();
+
+    for (const dir of directories) {
+      try {
+        const w = fs.watch(dir, { persistent: false, recursive }, () => {
+          resetHeartbeat();
+          onChange(dir);
+        });
+        w.on("error", () => {
+          // Watcher died — will be recovered by heartbeat
+        });
+        watchers.push(w);
+      } catch {
+        // Directory might have vanished between ensureDir and watch
+      }
+    }
+  }
+
+  function teardownWatchers(): void {
+    for (const w of watchers) {
+      try { w.close(); } catch { /* watcher already closed */ }
+    }
+    watchers = [];
+  }
+
+  function resetHeartbeat(): void {
+    if (heartbeatTimeoutMs <= 0 || !isActive) return;
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    heartbeatTimer = setTimeout(() => {
+      if (!isActive) return;
+      _reinitCount++;
+      ensureDirectories();
+      initWatchers();
+      resetHeartbeat();
+    }, heartbeatTimeoutMs);
+  }
+
+  return {
+    start() {
+      isActive = true;
+      _reinitCount = 0;
+      ensureDirectories();
+      initWatchers();
+      resetHeartbeat();
+    },
+
+    stop() {
+      isActive = false;
+      teardownWatchers();
+      if (heartbeatTimer) {
+        clearTimeout(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    },
+
+    heartbeat() {
+      resetHeartbeat();
+    },
+
+    get active() {
+      return isActive;
+    },
+
+    get reinitCount() {
+      return _reinitCount;
+    },
+  };
+}

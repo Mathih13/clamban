@@ -4,6 +4,7 @@ import path from "path";
 import type { TeamState, TeamMember } from "../types/team.ts";
 import type { TeamConfig } from "../types/board.ts";
 import { readBoard } from "./board-store.ts";
+import { createTurnGovernor, type TurnGovernor } from "./turn-governor.ts";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "~";
 const CLAMBAN_DIR = path.join(HOME, ".clamban");
@@ -32,6 +33,7 @@ let totalTurnsUsed = 0;
 let currentConfig: TeamConfig | null = null;
 let currentPort = 0;
 let currentOnExit: (() => void) | undefined;
+let turnGovernor: TurnGovernor | null = null;
 
 function isPidAlive(pid: number): boolean {
   try {
@@ -324,8 +326,16 @@ function spawnCycle(): void {
   const config = currentConfig;
   const port = currentPort;
   const maxTurns = config.maxTurns || 1000;
-  const remainingBudget = maxTurns - totalTurnsUsed;
 
+  // Use governor if available, fall back to manual tracking
+  if (turnGovernor && !turnGovernor.canSpawn()) {
+    teamActive = false;
+    persistState(config.teamName, { leadPid: undefined, stoppedAt: new Date().toISOString() });
+    currentOnExit?.();
+    return;
+  }
+
+  const remainingBudget = turnGovernor ? turnGovernor.remaining : (maxTurns - totalTurnsUsed);
   if (remainingBudget <= 0) {
     console.log(`[clamban] Turn budget exhausted (${totalTurnsUsed}/${maxTurns}), auto-stopping team`);
     teamActive = false;
@@ -335,7 +345,7 @@ function spawnCycle(): void {
   }
 
   const model = config.model || "sonnet";
-  const cycleTurns = Math.min(50, remainingBudget);
+  const cycleTurns = turnGovernor ? turnGovernor.allocateCycleBudget(50) : Math.min(50, remainingBudget);
   const prompt = buildLeadPrompt(config.teamName, config.projectDir, port);
 
   ensureDir(LOGS_DIR);
@@ -383,6 +393,7 @@ function spawnCycle(): void {
           // Accumulate turns from result events
           if (event.type === "result" && typeof event.num_turns === "number") {
             totalTurnsUsed += event.num_turns;
+            turnGovernor?.recordTurns(event.num_turns);
           }
           const logLine = formatStreamEvent(event);
           if (logLine) {
@@ -434,10 +445,10 @@ function spawnCycle(): void {
       return;
     }
 
-    // Turn budget exhausted
-    const maxT = config.maxTurns || 1000;
-    if (totalTurnsUsed >= maxT) {
-      console.log(`[clamban] Turn budget exhausted (${totalTurnsUsed}/${maxT}), auto-stopping team`);
+    // Turn budget exhausted — check governor first, fall back to manual
+    const budgetExhausted = turnGovernor ? turnGovernor.exhausted : (totalTurnsUsed >= (config.maxTurns || 1000));
+    if (budgetExhausted) {
+      console.log(`[clamban] Turn budget exhausted (${totalTurnsUsed}/${config.maxTurns || 1000}), auto-stopping team`);
       teamActive = false;
       persistState(teamName, { stoppedAt: new Date().toISOString() });
       currentOnExit?.();
@@ -475,6 +486,16 @@ export function startTeam(
   currentConfig = config;
   currentPort = port;
   currentOnExit = onExit;
+  turnGovernor = createTurnGovernor({
+    maxTurns: config.maxTurns || 1000,
+    onBudgetExhausted(used, max) {
+      console.log(`[clamban] Turn budget exhausted (${used}/${max}), auto-stopping team`);
+    },
+    warningThreshold: 0.1,
+    onBudgetWarning(used, max, remaining) {
+      console.warn(`[clamban] Turn budget warning: ${remaining} turns remaining (${used}/${max})`);
+    },
+  });
 
   // Truncate log on fresh start
   ensureDir(LOGS_DIR);
@@ -527,6 +548,11 @@ export function stopTeam(teamName: string): void {
 
 export function isTeamRunning(teamName: string): boolean {
   return checkRunning(teamName);
+}
+
+/** Expose the turn governor for monitoring (read-only use) */
+export function getTurnGovernor(): TurnGovernor | null {
+  return turnGovernor;
 }
 
 /** Called when board.json changes — triggers a new cycle if team is active */

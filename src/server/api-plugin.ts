@@ -1,13 +1,14 @@
 import type { Plugin } from "vite";
 import type { ServerResponse } from "http";
-import fs from "fs";
 import { handleRoute, onTeamChanged, setServerPort } from "./routes";
 import { getBoardPath, readBoard } from "./board-store";
 import { getTeamConfigDir, getTeamInboxDir, notifyBoardChanged } from "./team-manager";
+import { createResilientWatcher, type ResilientWatcher } from "./resilient-watcher";
 
 export function apiPlugin(): Plugin {
   const sseClients = new Set<ServerResponse>();
-  let teamWatchers: fs.FSWatcher[] = [];
+  let configWatcher: ResilientWatcher | null = null;
+  let inboxWatcher: ResilientWatcher | null = null;
   let currentTeamName: string | null = null;
   let watchedBoardPath: string | null = null;
 
@@ -19,10 +20,10 @@ export function apiPlugin(): Plugin {
   }
 
   function teardownTeamWatchers() {
-    for (const w of teamWatchers) {
-      try { w.close(); } catch {}
-    }
-    teamWatchers = [];
+    configWatcher?.stop();
+    inboxWatcher?.stop();
+    configWatcher = null;
+    inboxWatcher = null;
     currentTeamName = null;
   }
 
@@ -34,25 +35,22 @@ export function apiPlugin(): Plugin {
     const configDir = getTeamConfigDir(teamName);
     const inboxDir = getTeamInboxDir(teamName);
 
-    // Watch team config directory
-    try {
-      if (fs.existsSync(configDir)) {
-        const w = fs.watch(configDir, { persistent: false }, () => {
-          broadcast({ type: "team-changed" });
-        });
-        teamWatchers.push(w);
-      }
-    } catch {}
+    // Resilient config directory watcher — pre-creates dir, has heartbeat recovery
+    configWatcher = createResilientWatcher({
+      directories: [configDir],
+      onChange: () => broadcast({ type: "team-changed" }),
+      heartbeatTimeoutMs: 60_000,
+    });
+    configWatcher.start();
 
-    // Watch inboxes directory (recursive)
-    try {
-      if (fs.existsSync(inboxDir)) {
-        const w = fs.watch(inboxDir, { recursive: true, persistent: false }, () => {
-          broadcast({ type: "team-changed" });
-        });
-        teamWatchers.push(w);
-      }
-    } catch {}
+    // Resilient inbox watcher — pre-creates dir, recursive, has heartbeat recovery
+    inboxWatcher = createResilientWatcher({
+      directories: [inboxDir],
+      onChange: () => broadcast({ type: "team-changed" }),
+      heartbeatTimeoutMs: 60_000,
+      recursive: true,
+    });
+    inboxWatcher.start();
   }
 
   function syncTeamWatchers() {
