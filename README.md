@@ -10,7 +10,7 @@ Clamban combines Ralphing-style task decomposition with a Kanban board where a t
 
 Tasks hold descriptions, comments from team members, references to other tasks, and file context — like a Jira or Azure DevOps board, but backed by plain JSON for easy LLM interaction. When a worker agent starts a task, it gets precise history alongside current needs rather than an entire project dump. Comments and task relationships act as breadcrumbs, letting agents discover context from previous work without overloading the context window.
 
-By scoping context to single tasks and providing dynamic inputs — comments from AI team members, history via task links — agents can run longer and more reliably. They discover new problems as they work and add them to the backlog, referencing the context that created the task.
+By scoping context to single tasks and providing dynamic inputs (comments from AI team members, history via task links) agents can run longer and more reliably. They discover new problems as they work and add them to the backlog, referencing the context that created the task.
 
 <!-- TODO: screenshot or demo GIF -->
 
