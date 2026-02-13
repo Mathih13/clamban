@@ -33,6 +33,7 @@ export function createTurnGovernor(options: TurnGovernorOptions): TurnGovernor {
 
   function checkWarning(): void {
     if (warningFired || !onBudgetWarning) return;
+    if (maxTurns <= 0) return;
     const remaining = maxTurns - turnsUsed;
     if (remaining / maxTurns <= warningThreshold) {
       warningFired = true;

@@ -86,7 +86,7 @@ export async function handleRoute(
 
     const column = parsedUrl.searchParams.get("column");
     const rawLimit = parseInt(parsedUrl.searchParams.get("limit") || "20", 10);
-    const limit = Math.min(Number.isNaN(rawLimit) ? 20 : rawLimit, 100);
+    const limit = Math.max(0, Math.min(Number.isNaN(rawLimit) ? 20 : rawLimit, 100));
 
     const board = readBoard();
     const needle = q.toLowerCase();
