@@ -76,6 +76,49 @@ export async function handleRoute(
     return true;
   }
 
+  // GET /api/tasks/search
+  if (method === "GET" && parsedUrl.pathname === "/api/tasks/search") {
+    const q = parsedUrl.searchParams.get("q");
+    if (!q) {
+      json(res, 400, { error: "q parameter is required" });
+      return true;
+    }
+
+    const column = parsedUrl.searchParams.get("column");
+    const rawLimit = parseInt(parsedUrl.searchParams.get("limit") || "20", 10);
+    const limit = Math.max(0, Math.min(Number.isNaN(rawLimit) ? 20 : rawLimit, 100));
+
+    const board = readBoard();
+    const needle = q.toLowerCase();
+
+    const results = board.tasks.filter((t) => {
+      if (column && t.column !== column) return false;
+      return (
+        t.title.toLowerCase().includes(needle) ||
+        t.description.toLowerCase().includes(needle) ||
+        t.tags.some((tag) => tag.toLowerCase().includes(needle))
+      );
+    });
+
+    json(res, 200, results.slice(0, limit));
+    return true;
+  }
+
+  // GET /api/tasks?ids=id1,id2,id3
+  if (method === "GET" && parsedUrl.pathname === "/api/tasks") {
+    const idsParam = parsedUrl.searchParams.get("ids");
+    if (!idsParam) {
+      json(res, 400, { error: "ids parameter is required" });
+      return true;
+    }
+    const ids = idsParam.split(",").filter(Boolean);
+    const board = readBoard();
+    const idSet = new Set(ids);
+    const results = board.tasks.filter((t) => idSet.has(t.id));
+    json(res, 200, results);
+    return true;
+  }
+
   // POST /api/tasks
   if (method === "POST" && url === "/api/tasks") {
     const body = await parseBody(req);

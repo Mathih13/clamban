@@ -4,6 +4,7 @@ import path from "path";
 import type { TeamState, TeamMember } from "../types/team.ts";
 import type { TeamConfig } from "../types/board.ts";
 import { readBoard } from "./board-store.ts";
+import { createTurnGovernor, type TurnGovernor } from "./turn-governor.ts";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "~";
 const CLAMBAN_DIR = path.join(HOME, ".clamban");
@@ -32,6 +33,7 @@ let totalTurnsUsed = 0;
 let currentConfig: TeamConfig | null = null;
 let currentPort = 0;
 let currentOnExit: (() => void) | undefined;
+let turnGovernor: TurnGovernor | null = null;
 
 function isPidAlive(pid: number): boolean {
   try {
@@ -179,6 +181,12 @@ Create a new task (returns the created task with its ID):
 Link two tasks (type: "related", "blocks", "blocked-by", "parent", "child"):
   curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/refs -H 'Content-Type: application/json' -d '{"taskId":"OTHER_TASK_ID","type":"related"}'
 
+Search tasks (find related done tasks by keyword):
+  curl -s 'http://localhost:${port}/api/tasks/search?q=KEYWORD&column=done&limit=5'
+
+Fetch tasks by IDs (e.g. to look up refs):
+  curl -s 'http://localhost:${port}/api/tasks?ids=ID1,ID2,ID3'
+
 ## Task Lifecycle
 
 When you notice tasks that are related (e.g. similar area of code, one depends on another, or a bug was discovered while working on a feature), link them using the refs API. This helps future teams understand relationships between work items.
@@ -205,9 +213,13 @@ Review completed work:
 ### Backlog column — Triage & Promote
 For each backlog task, sorted by priority (critical > high > medium > low):
 1. Read the task title, description, and priority
-2. Add a triage comment with your assessment: estimated effort, importance, any questions
-3. Do NOT promote in the same cycle — just triage. The triage comment will trigger a board change, which will re-invoke you automatically.
-4. On a SUBSEQUENT cycle, if the task warrants work based on its priority and your assessment, promote it:
+2. Search for related done tasks using 1-2 keywords from the title:
+   curl -s 'http://localhost:${port}/api/tasks/search?q=KEYWORD&column=done&limit=5'
+   If matches are found, link each relevant result to this task so workers have context:
+   curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/refs -H 'Content-Type: application/json' -d '{"taskId":"MATCHED_TASK_ID","type":"related"}'
+3. Add a triage comment with your assessment: estimated effort, importance, any questions, and any relevant prior work found from linked tasks
+4. Do NOT promote in the same cycle — just triage. The triage comment will trigger a board change, which will re-invoke you automatically.
+5. On a SUBSEQUENT cycle, if the task warrants work based on its priority and your assessment, promote it:
    - PATCH column to "ready"
    - Add a comment: "Promoting to ready — {brief reason}"
 
@@ -245,8 +257,19 @@ Always link new tasks to the related existing task using the refs API. Set the p
 When spawning workers via the Task tool:
 - Use subagent_type "general-purpose"
 - Set the working directory context to: ${projectDir}
-- Give them the task title, description, and file context from the board task
-- IMPORTANT: Include these instructions in every worker prompt so they can update the board directly:
+- Give them the task ID and their worker name. Do NOT paste the full task description — let the worker fetch it.
+- IMPORTANT: Include these instructions in every worker prompt so they can interact with the board:
+
+  Your task ID is TASK_ID. Your name is YOUR_NAME.
+
+  ## Getting Started
+  First, fetch your task to understand what needs to be done:
+  curl -s 'http://localhost:${port}/api/tasks?ids=TASK_ID'
+  Read the title, description, file context, and tags carefully.
+
+  Then check the task's refs array. If it has related tasks, fetch them to review prior work, reuse patterns, and avoid conflicts:
+  curl -s 'http://localhost:${port}/api/tasks?ids=REF_ID1,REF_ID2'
+
   ## Board Interaction
   Post progress comments to the board using: curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/comments -H 'Content-Type: application/json' -d '{\"author\":\"YOUR_NAME\",\"text\":\"Your update here\"}'
   Post a comment when you start work, when you hit blockers, and when you finish with a summary of changes made.
@@ -324,8 +347,16 @@ function spawnCycle(): void {
   const config = currentConfig;
   const port = currentPort;
   const maxTurns = config.maxTurns || 1000;
-  const remainingBudget = maxTurns - totalTurnsUsed;
 
+  // Use governor if available, fall back to manual tracking
+  if (turnGovernor && !turnGovernor.canSpawn()) {
+    teamActive = false;
+    persistState(config.teamName, { leadPid: undefined, stoppedAt: new Date().toISOString() });
+    currentOnExit?.();
+    return;
+  }
+
+  const remainingBudget = turnGovernor ? turnGovernor.remaining : (maxTurns - totalTurnsUsed);
   if (remainingBudget <= 0) {
     console.log(`[clamban] Turn budget exhausted (${totalTurnsUsed}/${maxTurns}), auto-stopping team`);
     teamActive = false;
@@ -335,7 +366,7 @@ function spawnCycle(): void {
   }
 
   const model = config.model || "sonnet";
-  const cycleTurns = Math.min(50, remainingBudget);
+  const cycleTurns = turnGovernor ? turnGovernor.allocateCycleBudget(50) : Math.min(50, remainingBudget);
   const prompt = buildLeadPrompt(config.teamName, config.projectDir, port);
 
   ensureDir(LOGS_DIR);
@@ -383,6 +414,7 @@ function spawnCycle(): void {
           // Accumulate turns from result events
           if (event.type === "result" && typeof event.num_turns === "number") {
             totalTurnsUsed += event.num_turns;
+            turnGovernor?.recordTurns(event.num_turns);
           }
           const logLine = formatStreamEvent(event);
           if (logLine) {
@@ -434,10 +466,10 @@ function spawnCycle(): void {
       return;
     }
 
-    // Turn budget exhausted
-    const maxT = config.maxTurns || 1000;
-    if (totalTurnsUsed >= maxT) {
-      console.log(`[clamban] Turn budget exhausted (${totalTurnsUsed}/${maxT}), auto-stopping team`);
+    // Turn budget exhausted — check governor first, fall back to manual
+    const budgetExhausted = turnGovernor ? turnGovernor.exhausted : (totalTurnsUsed >= (config.maxTurns || 1000));
+    if (budgetExhausted) {
+      console.log(`[clamban] Turn budget exhausted (${totalTurnsUsed}/${config.maxTurns || 1000}), auto-stopping team`);
       teamActive = false;
       persistState(teamName, { stoppedAt: new Date().toISOString() });
       currentOnExit?.();
@@ -475,6 +507,16 @@ export function startTeam(
   currentConfig = config;
   currentPort = port;
   currentOnExit = onExit;
+  turnGovernor = createTurnGovernor({
+    maxTurns: config.maxTurns || 1000,
+    onBudgetExhausted(used, max) {
+      console.log(`[clamban] Turn budget exhausted (${used}/${max}), auto-stopping team`);
+    },
+    warningThreshold: 0.1,
+    onBudgetWarning(used, max, remaining) {
+      console.warn(`[clamban] Turn budget warning: ${remaining} turns remaining (${used}/${max})`);
+    },
+  });
 
   // Truncate log on fresh start
   ensureDir(LOGS_DIR);
@@ -527,6 +569,11 @@ export function stopTeam(teamName: string): void {
 
 export function isTeamRunning(teamName: string): boolean {
   return checkRunning(teamName);
+}
+
+/** Expose the turn governor for monitoring (read-only use) */
+export function getTurnGovernor(): TurnGovernor | null {
+  return turnGovernor;
 }
 
 /** Called when board.json changes — triggers a new cycle if team is active */
