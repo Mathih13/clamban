@@ -27,6 +27,16 @@ export interface TeamResponse {
 export const api = {
   getBoard: () => request<Board>("/board"),
 
+  getTasksByIds: (ids: string[]) =>
+    request<Task[]>(`/tasks?ids=${ids.join(",")}`),
+
+  searchTasks: (q: string, options?: { column?: string; limit?: number }) => {
+    const params = new URLSearchParams({ q });
+    if (options?.column) params.set("column", options.column);
+    if (options?.limit) params.set("limit", String(options.limit));
+    return request<Task[]>(`/tasks/search?${params}`);
+  },
+
   createTask: (task: Partial<Task>) =>
     request<Task>("/tasks", {
       method: "POST",
