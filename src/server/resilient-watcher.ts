@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 
 export interface WatcherOptions {
   /** Directories to ensure exist before watching */
@@ -46,19 +45,6 @@ export function createResilientWatcher(options: WatcherOptions): ResilientWatche
     }
   }
 
-  /** Collect all subdirectories under `root` (including `root` itself) */
-  function walkDirs(root: string): string[] {
-    const result = [root];
-    try {
-      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          result.push(...walkDirs(path.join(root, entry.name)));
-        }
-      }
-    } catch { /* dir may have vanished */ }
-    return result;
-  }
-
   function watchCallback(dir: string): void {
     resetHeartbeat();
     try {
@@ -85,17 +71,8 @@ export function createResilientWatcher(options: WatcherOptions): ResilientWatche
   function initWatchers(): void {
     teardownWatchers();
 
-    // Linux inotify does not support recursive fs.watch — watch each subdir individually
-    const needsManualRecursion = recursive && process.platform === "linux";
-
     for (const dir of directories) {
-      if (needsManualRecursion) {
-        for (const subdir of walkDirs(dir)) {
-          watchSingle(subdir, false);
-        }
-      } else {
-        watchSingle(dir, recursive);
-      }
+      watchSingle(dir, recursive);
     }
   }
 
