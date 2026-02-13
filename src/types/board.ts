@@ -34,6 +34,7 @@ export interface Task {
   context: FileContext[];
   refs: TaskRef[];
   assignee?: string;
+  branch?: string;
   createdAt: string;
   updatedAt: string;
 }

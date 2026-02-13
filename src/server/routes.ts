@@ -178,6 +178,7 @@ export async function handleRoute(
       "tags",
       "context",
       "assignee",
+      "branch",
     ] as const;
     for (const key of updatable) {
       if (key in body) {

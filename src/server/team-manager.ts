@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "child_process";
+import { execSync, spawn, type ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
 import type { TeamState, TeamMember } from "../types/team.ts";
@@ -11,6 +11,34 @@ const CLAMBAN_DIR = path.join(HOME, ".clamban");
 const LOGS_DIR = path.join(CLAMBAN_DIR, "logs");
 const STATE_DIR = path.join(CLAMBAN_DIR, "state");
 const CLAUDE_TEAMS_DIR = path.join(HOME, ".claude", "teams");
+
+let gitButlerEnabled = false;
+
+function checkGitButler(projectDir: string): { available: boolean; initialized: boolean } {
+  try {
+    execSync("but --version", { cwd: projectDir, stdio: "pipe" });
+  } catch {
+    return { available: false, initialized: false };
+  }
+  try {
+    execSync("but status", { cwd: projectDir, stdio: "pipe" });
+    return { available: true, initialized: true };
+  } catch {
+    return { available: true, initialized: false };
+  }
+}
+
+function ensureGitButlerSetup(projectDir: string): boolean {
+  const { available, initialized } = checkGitButler(projectDir);
+  if (!available) return false;
+  if (initialized) return true;
+  try {
+    execSync("but setup", { cwd: projectDir, stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function getStatePath(teamName: string): string {
   return path.join(STATE_DIR, `${teamName}.json`);
@@ -186,7 +214,29 @@ Search tasks (find related done tasks by keyword):
 
 Fetch tasks by IDs (e.g. to look up refs):
   curl -s 'http://localhost:${port}/api/tasks?ids=ID1,ID2,ID3'
+${gitButlerEnabled ? `
+## GitButler Virtual Branches
 
+Branch names follow the pattern: {task-type}/{TASK_ID} (e.g. feature/m5abc123, bug/m5def456)
+
+Create a branch for a task:
+  but branch new {TYPE}/{TASK_ID}
+
+Review changes on a branch:
+  but diff {TYPE}/{TASK_ID}
+
+Push a branch to remote:
+  but push {TYPE}/{TASK_ID}
+
+Create/update PRs for pushed branches:
+  but pr
+
+Unapply a finished branch:
+  but branch unapply {TYPE}/{TASK_ID}
+
+Show workspace state:
+  but status
+` : ""}
 ## Task Lifecycle
 
 When you notice tasks that are related (e.g. similar area of code, one depends on another, or a bug was discovered while working on a feature), link them using the refs API. This helps future teams understand relationships between work items.
@@ -194,9 +244,13 @@ When you notice tasks that are related (e.g. similar area of code, one depends o
 ### Ready column — Pick up and assign
 For each task with column "ready", sorted by priority (critical > high > medium > low):
 1. Pick the most suitable team member from the list above (or the least busy one)
-2. IMMEDIATELY update the board: PATCH with BOTH column="in-progress" AND assignee="{member-name}" in the SAME request
+${gitButlerEnabled ? `2. Derive branch name from the task's type and ID: {TYPE}/{TASK_ID} (e.g. feature/m5abc123)
+3. Create virtual branch: \`but branch new {TYPE}/{TASK_ID}\` — if it fails (already exists), run \`but branch apply {TYPE}/{TASK_ID}\` instead
+4. IMMEDIATELY update the board: PATCH with column="in-progress", assignee="{member-name}", AND branch="{TYPE}/{TASK_ID}" in the SAME request
+5. Add a comment: "Assigned to {member-name}, branch: {TYPE}/{TASK_ID}"
+6. THEN send work to that member via the Task tool (use their name as the "name" parameter)` : `2. IMMEDIATELY update the board: PATCH with BOTH column="in-progress" AND assignee="{member-name}" in the SAME request
 3. Add a comment: "Assigned to {member-name}"
-4. THEN send work to that member via the Task tool (use their name as the "name" parameter)
+4. THEN send work to that member via the Task tool (use their name as the "name" parameter)`}
 
 CRITICAL: The PATCH to move a task to in-progress MUST always include the "assignee" field. Never PATCH column without also setting assignee. Use ONLY names from the Team Members list above.
 
@@ -207,8 +261,10 @@ Monitor your spawned workers. When a worker reports back with results:
 
 ### Review column — Approve or reject
 Review completed work:
-1. If the work looks good: PATCH column to "done", add approval comment
-2. If changes needed: PATCH column back to "in-progress", add feedback comment, re-assign
+${gitButlerEnabled ? `1. Review diff: \`but diff {BRANCH_NAME}\` (read the branch field from the task)
+2. If the work looks good: \`but push {BRANCH_NAME}\`, \`but pr\`, \`but branch unapply {BRANCH_NAME}\`, then PATCH column to "done", add approval comment
+3. If changes needed: PATCH column back to "in-progress", add feedback comment, re-assign` : `1. If the work looks good: PATCH column to "done", add approval comment
+2. If changes needed: PATCH column back to "in-progress", add feedback comment, re-assign`}
 
 ### Backlog column — Triage & Promote
 For each backlog task, sorted by priority (critical > high > medium > low):
@@ -269,7 +325,23 @@ When spawning workers via the Task tool:
 
   Then check the task's refs array. If it has related tasks, fetch them to review prior work, reuse patterns, and avoid conflicts:
   curl -s 'http://localhost:${port}/api/tasks?ids=REF_ID1,REF_ID2'
+${gitButlerEnabled ? `
+  ## Git Workflow
+  Your task has a virtual branch. After fetching your task, read the "branch" field.
 
+  IMPORTANT: Do NOT use raw git commands. Use GitButler instead:
+
+  Stage files to your branch:
+    but stage <file-path> <BRANCH_NAME>
+
+  Commit to your branch:
+    but commit <BRANCH_NAME> -m "descriptive message"
+
+  Check your branch state:
+    but diff <BRANCH_NAME>
+
+  Commit frequently after each logical unit of work.
+` : ""}
   ## Board Interaction
   Post progress comments to the board using: curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/comments -H 'Content-Type: application/json' -d '{\"author\":\"YOUR_NAME\",\"text\":\"Your update here\"}'
   Post a comment when you start work, when you hit blockers, and when you finish with a summary of changes made.
@@ -517,6 +589,8 @@ export function startTeam(
       console.warn(`[clamban] Turn budget warning: ${remaining} turns remaining (${used}/${max})`);
     },
   });
+
+  gitButlerEnabled = ensureGitButlerSetup(config.projectDir);
 
   // Truncate log on fresh start
   ensureDir(LOGS_DIR);

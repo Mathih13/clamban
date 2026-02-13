@@ -1,6 +1,6 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, MoreHorizontal, Pencil, Trash2, MessageSquare, FileCode2, Link2 } from "lucide-react";
+import { GitBranch, GripVertical, MoreHorizontal, Pencil, Trash2, MessageSquare, FileCode2, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -115,7 +115,7 @@ export function TaskCard({ task, onEdit, onDelete, onClick }: TaskCardProps) {
               </Badge>
             ))}
           </div>
-          {(task.comments.length > 0 || task.context.length > 0 || (task.refs ?? []).length > 0 || task.assignee) && (
+          {(task.comments.length > 0 || task.context.length > 0 || (task.refs ?? []).length > 0 || task.assignee || task.branch) && (
             <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
               {task.assignee && (
                 <span className="flex items-center gap-1">
@@ -141,6 +141,11 @@ export function TaskCard({ task, onEdit, onDelete, onClick }: TaskCardProps) {
                 <span className="flex items-center gap-1">
                   <FileCode2 className="size-3" />
                   {task.context.length}
+                </span>
+              )}
+              {task.branch && (
+                <span className="flex items-center gap-1">
+                  <GitBranch className="size-3" />
                 </span>
               )}
             </div>

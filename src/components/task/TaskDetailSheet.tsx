@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
-import { Trash2 } from "lucide-react";
+import { GitBranch, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -82,6 +82,12 @@ export function TaskDetailSheet({
                 {task.assignee[0]?.toUpperCase()}
               </span>
               {task.assignee}
+            </Badge>
+          )}
+          {task.branch && (
+            <Badge variant="secondary" className="text-xs font-mono gap-1">
+              <GitBranch className="size-3" />
+              {task.branch}
             </Badge>
           )}
           {task.tags.map((tag) => (
