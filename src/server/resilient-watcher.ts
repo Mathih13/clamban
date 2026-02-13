@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 
 export interface WatcherOptions {
   /** Directories to ensure exist before watching */
@@ -45,21 +46,55 @@ export function createResilientWatcher(options: WatcherOptions): ResilientWatche
     }
   }
 
+  /** Collect all subdirectories under `root` (including `root` itself) */
+  function walkDirs(root: string): string[] {
+    const result = [root];
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          result.push(...walkDirs(path.join(root, entry.name)));
+        }
+      }
+    } catch { /* dir may have vanished */ }
+    return result;
+  }
+
+  function watchCallback(dir: string): void {
+    resetHeartbeat();
+    try {
+      onChange(dir);
+    } catch {
+      // Prevent unhandled exceptions from crashing the process
+    }
+  }
+
+  function watchSingle(dir: string, useRecursive: boolean): void {
+    try {
+      const w = fs.watch(dir, { persistent: false, recursive: useRecursive }, () => {
+        watchCallback(dir);
+      });
+      w.on("error", () => {
+        // Watcher died — will be recovered by heartbeat
+      });
+      watchers.push(w);
+    } catch {
+      // Directory might have vanished between ensureDir and watch
+    }
+  }
+
   function initWatchers(): void {
     teardownWatchers();
 
+    // Linux inotify does not support recursive fs.watch — watch each subdir individually
+    const needsManualRecursion = recursive && process.platform === "linux";
+
     for (const dir of directories) {
-      try {
-        const w = fs.watch(dir, { persistent: false, recursive }, () => {
-          resetHeartbeat();
-          onChange(dir);
-        });
-        w.on("error", () => {
-          // Watcher died — will be recovered by heartbeat
-        });
-        watchers.push(w);
-      } catch {
-        // Directory might have vanished between ensureDir and watch
+      if (needsManualRecursion) {
+        for (const subdir of walkDirs(dir)) {
+          watchSingle(subdir, false);
+        }
+      } else {
+        watchSingle(dir, recursive);
       }
     }
   }

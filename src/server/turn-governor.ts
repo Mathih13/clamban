@@ -43,6 +43,9 @@ export function createTurnGovernor(options: TurnGovernorOptions): TurnGovernor {
 
   return {
     recordTurns(count: number): boolean {
+      if (!Number.isFinite(count)) return !exhausted;
+      count = Math.max(0, count);
+      if (count === 0) return !exhausted;
       turnsUsed += count;
       checkWarning();
       if (turnsUsed >= maxTurns) {
