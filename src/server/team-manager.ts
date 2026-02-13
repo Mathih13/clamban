@@ -16,12 +16,12 @@ let gitButlerEnabled = false;
 
 function checkGitButler(projectDir: string): { available: boolean; initialized: boolean } {
   try {
-    execSync("but --version", { cwd: projectDir, stdio: "pipe" });
+    execSync("but --version", { cwd: projectDir, stdio: "pipe", timeout: 5000 });
   } catch {
     return { available: false, initialized: false };
   }
   try {
-    execSync("but status", { cwd: projectDir, stdio: "pipe" });
+    execSync("but status", { cwd: projectDir, stdio: "pipe", timeout: 5000 });
     return { available: true, initialized: true };
   } catch {
     return { available: true, initialized: false };
@@ -33,7 +33,7 @@ function ensureGitButlerSetup(projectDir: string): boolean {
   if (!available) return false;
   if (initialized) return true;
   try {
-    execSync("but setup", { cwd: projectDir, stdio: "pipe" });
+    execSync("but setup", { cwd: projectDir, stdio: "pipe", timeout: 15000 });
     return true;
   } catch {
     return false;
