@@ -95,8 +95,8 @@ export async function handleRoute(
       if (column && t.column !== column) return false;
       return (
         t.title.toLowerCase().includes(needle) ||
-        t.description.toLowerCase().includes(needle) ||
-        t.tags.some((tag) => tag.toLowerCase().includes(needle))
+        (t.description ?? "").toLowerCase().includes(needle) ||
+        (t.tags ?? []).some((tag) => tag.toLowerCase().includes(needle))
       );
     });
 
@@ -178,6 +178,7 @@ export async function handleRoute(
       "tags",
       "context",
       "assignee",
+      "branch",
     ] as const;
     for (const key of updatable) {
       if (key in body) {
