@@ -273,14 +273,16 @@ For each backlog task, sorted by priority (critical > high > medium > low):
    curl -s 'http://localhost:${port}/api/tasks/search?q=KEYWORD&column=done&limit=5'
    If matches are found, link each relevant result to this task so workers have context:
    curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/refs -H 'Content-Type: application/json' -d '{"taskId":"MATCHED_TASK_ID","type":"related"}'
-3. Add a triage comment with your assessment: estimated effort, importance, any questions, and any relevant prior work found from linked tasks
-4. Do NOT promote in the same cycle — just triage. The triage comment will trigger a board change, which will re-invoke you automatically.
-5. On a SUBSEQUENT cycle, if the task warrants work based on its priority and your assessment, promote it:
-   - PATCH column to "ready"
-   - Add a comment: "Promoting to ready — {brief reason}"
+3. If the task has NO triage comment yet from you: add a triage comment with your assessment (estimated effort, importance, any questions, relevant prior work found)
+4. If the task ALREADY HAS a triage comment from you (or was already triaged): decide whether to promote it now
 
-Guidelines for promoting:
-- Critical/high priority: promote on the next cycle after triage
+Promotion rules:
+- If there are tasks in ready, in-progress, or review columns: only promote critical/high priority backlog items
+- If NO tasks are in ready, in-progress, or review: promote backlog items according to priority guidelines below
+- To promote: PATCH column to "ready", add a comment: "Promoting to ready — {brief reason}"
+
+Priority guidelines for promotion:
+- Critical/high priority: promote immediately (same cycle as triage if no active work, next cycle otherwise)
 - Medium priority: promote when no critical/high tasks are pending
 - Low priority: only promote when the board is otherwise clear
 
@@ -312,11 +314,24 @@ Always link new tasks to the related existing task using the refs API. Set the p
 ## Worker Spawning
 When spawning workers via the Task tool:
 - Use subagent_type "general-purpose"
+- Use model "${board.meta.team?.workerModel || "sonnet"}" for workers
 - Set the working directory context to: ${projectDir}
 - Give them the task ID and their worker name. Do NOT paste the full task description — let the worker fetch it.
 - IMPORTANT: Include these instructions in every worker prompt so they can interact with the board:
 
   Your task ID is TASK_ID. Your name is YOUR_NAME.
+  Your debug log file is: ${LOGS_DIR}/${teamName}/workers/YOUR_NAME.log
+
+  ## Debug Logging
+  Log your progress and key command outputs so the team can monitor your work.
+  First, initialize your log:
+    mkdir -p ${LOGS_DIR}/${teamName}/workers && echo "=== Task TASK_ID started $(date -Iseconds) ===" >> ${LOGS_DIR}/${teamName}/workers/YOUR_NAME.log
+  After significant actions, log what you did:
+    echo "[$(date -Iseconds)] description of action" >> ${LOGS_DIR}/${teamName}/workers/YOUR_NAME.log
+  For commands with relevant output, capture it:
+    some_command 2>&1 | tee -a ${LOGS_DIR}/${teamName}/workers/YOUR_NAME.log
+  When finished, log completion:
+    echo "=== Task TASK_ID completed $(date -Iseconds) ===" >> ${LOGS_DIR}/${teamName}/workers/YOUR_NAME.log
 
   ## Getting Started
   First, fetch your task to understand what needs to be done:
@@ -342,9 +357,19 @@ ${gitButlerEnabled ? `
 
   Commit frequently after each logical unit of work.
 ` : ""}
+  ## Code Review (REQUIRED before reporting completion)
+  After you have finished your implementation and committed all changes, you MUST run a CodeRabbit review before reporting completion:
+    /coderabbit:review --base main
+  This reviews your changes against the main branch and flags issues (bugs, style, security, etc.).
+  If CodeRabbit flags issues: fix them, commit the fixes, and run the review again until it passes clean.
+  Only report your task as complete AFTER the CodeRabbit review is clean or all flagged issues are addressed.
+  IMPORTANT: Post a board comment summarizing CodeRabbit results — list each finding, whether you fixed it or why you skipped it. Example:
+    "CodeRabbit review: 3 issues found. Fixed: null check in GetShop(), unused import in Config.cs, missing test assertion. Skipped: naming nitpick (matches existing codebase convention)."
+  This gives the team lead visibility into what was caught and resolved.
+
   ## Board Interaction
   Post progress comments to the board using: curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/comments -H 'Content-Type: application/json' -d '{\"author\":\"YOUR_NAME\",\"text\":\"Your update here\"}'
-  Post a comment when you start work, when you hit blockers, and when you finish with a summary of changes made.
+  Post a comment when you start work, when you hit blockers, and when you finish with a summary of changes made (include that CodeRabbit review passed).
 
   ## File Context
   When you create or modify important files (especially docs, configs, markdown, or new source files), attach them to the task:
@@ -558,6 +583,24 @@ function spawnCycle(): void {
       return;
     }
 
+    // Check if there's actionable work remaining (ready tasks, or backlog to promote)
+    try {
+      const board = readBoard();
+      const hasReady = board.tasks.some((t) => t.column === "ready");
+      const hasInProgress = board.tasks.some((t) => t.column === "in-progress");
+      const hasReview = board.tasks.some((t) => t.column === "review");
+      const hasBacklog = board.tasks.some((t) => t.column === "backlog");
+
+      if (hasReady || hasInProgress || hasReview || hasBacklog) {
+        debounceTimer = setTimeout(() => {
+          debounceTimer = null;
+          spawnCycle();
+        }, 5000);
+        currentOnExit?.();
+        return;
+      }
+    } catch {}
+
     // Nothing pending — go idle, wait for next board-change event
     currentOnExit?.();
   });
@@ -693,6 +736,45 @@ export function getTeamInboxDir(teamName: string): string {
 export function readLogTail(teamName: string, lines: number = 200): string {
   try {
     const logPath = getLogFilePath(teamName);
+    if (!fs.existsSync(logPath)) return "";
+    const content = fs.readFileSync(logPath, "utf-8");
+    const allLines = content.split("\n");
+    return allLines.slice(-lines).join("\n");
+  } catch {
+    return "";
+  }
+}
+
+function validatePathSegment(name: string): void {
+  if (!name || /[\/\\]/.test(name) || name.includes("..")) {
+    throw new Error(`Invalid path segment: ${name}`);
+  }
+}
+
+export function getWorkerLogDir(teamName: string): string {
+  validatePathSegment(teamName);
+  return path.join(LOGS_DIR, teamName, "workers");
+}
+
+export function listWorkerLogs(teamName: string): string[] {
+  try {
+    const dir = getWorkerLogDir(teamName);
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir)
+      .filter((f) => f.endsWith(".log"))
+      .map((f) => f.replace(/\.log$/, ""));
+  } catch {
+    return [];
+  }
+}
+
+export function readWorkerLogTail(teamName: string, workerName: string, lines: number = 200): string {
+  try {
+    validatePathSegment(workerName);
+    const dir = getWorkerLogDir(teamName);
+    const logPath = path.join(dir, `${workerName}.log`);
+    const resolvedPath = path.resolve(logPath);
+    if (!resolvedPath.startsWith(path.resolve(dir) + path.sep)) return "";
     if (!fs.existsSync(logPath)) return "";
     const content = fs.readFileSync(logPath, "utf-8");
     const allLines = content.split("\n");
