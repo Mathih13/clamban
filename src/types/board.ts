@@ -43,6 +43,7 @@ export interface TeamConfig {
   teamName: string;
   projectDir: string;
   model?: string;
+  workerModel?: string;
   maxTurns?: number;
 }
 

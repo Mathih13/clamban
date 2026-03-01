@@ -22,7 +22,12 @@ export function useTeam() {
     const es = new EventSource("/api/events");
 
     es.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
       if (data.type === "team-changed" || data.type === "board-changed") {
         fetchTeam();
       }
@@ -36,7 +41,7 @@ export function useTeam() {
   }, [fetchTeam]);
 
   const connect = useCallback(
-    async (config: { teamName: string; projectDir: string; model?: string; maxTurns?: number }) => {
+    async (config: { teamName: string; projectDir: string; model?: string; workerModel?: string; maxTurns?: number }) => {
       await api.connectTeam(config);
       await fetchTeam();
       toast.success("Team connected");

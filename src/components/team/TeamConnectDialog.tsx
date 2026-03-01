@@ -26,6 +26,7 @@ interface TeamConnectDialogProps {
     teamName: string;
     projectDir: string;
     model?: string;
+    workerModel?: string;
     maxTurns?: number;
   }) => void;
 }
@@ -39,6 +40,7 @@ export function TeamConnectDialog({
   const [teamName, setTeamName] = useState("");
   const [projectDir, setProjectDir] = useState("");
   const [model, setModel] = useState("sonnet");
+  const [workerModel, setWorkerModel] = useState("sonnet");
 
   useEffect(() => {
     if (open) {
@@ -54,7 +56,7 @@ export function TeamConnectDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!teamName.trim() || !projectDir.trim()) return;
-    onConnect({ teamName: teamName.trim(), projectDir: projectDir.trim(), model });
+    onConnect({ teamName: teamName.trim(), projectDir: projectDir.trim(), model, workerModel });
     onOpenChange(false);
   }
 
@@ -103,8 +105,21 @@ export function TeamConnectDialog({
               />
             </div>
             <div className="grid gap-2">
-              <Label>Model</Label>
+              <Label>Lead Model</Label>
               <Select value={model} onValueChange={setModel}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="opus">Opus</SelectItem>
+                  <SelectItem value="sonnet">Sonnet</SelectItem>
+                  <SelectItem value="haiku">Haiku</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Worker Model</Label>
+              <Select value={workerModel} onValueChange={setWorkerModel}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>

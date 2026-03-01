@@ -9,6 +9,8 @@ import {
   isTeamRunning,
   listAvailableTeams,
   readLogTail,
+  listWorkerLogs,
+  readWorkerLogTail,
 } from "./team-manager";
 
 let serverPort = 5173; // default, updated by api-plugin
@@ -25,7 +27,7 @@ function parseBody(req: IncomingMessage): Promise<Record<string, unknown>> {
       try {
         resolve(data ? JSON.parse(data) : {});
       } catch {
-        reject(new Error("Invalid JSON"));
+        reject(new Error(`Invalid JSON in ${req.method} ${req.url}: ${data.slice(0, 200)}`));
       }
     });
     req.on("error", reject);
@@ -405,6 +407,7 @@ export async function handleRoute(
       teamName: (body.teamName as string) || "",
       projectDir: (body.projectDir as string) || "",
       model: (body.model as string) || "sonnet",
+      workerModel: (body.workerModel as string) || "sonnet",
       maxTurns: (body.maxTurns as number) || 1000,
     };
 
@@ -474,15 +477,40 @@ export async function handleRoute(
     return true;
   }
 
-  // GET /api/team/logs
-  if (method === "GET" && url.startsWith("/api/team/logs")) {
+  // GET /api/team/worker-logs — list available worker logs
+  if (method === "GET" && parsedUrl.pathname === "/api/team/worker-logs") {
+    const teamName = getActiveTeam();
+    if (!teamName) {
+      json(res, 200, { workers: [] });
+      return true;
+    }
+    json(res, 200, { workers: listWorkerLogs(teamName) });
+    return true;
+  }
+
+  // GET /api/team/worker-logs/:name — read a specific worker's log
+  const workerLogMatch = parsedUrl.pathname.match(/^\/api\/team\/worker-logs\/([^/]+)$/);
+  if (method === "GET" && workerLogMatch) {
     const teamName = getActiveTeam();
     if (!teamName) {
       json(res, 200, { content: "" });
       return true;
     }
-    const params = new URL(url, "http://localhost").searchParams;
-    const lines = parseInt(params.get("lines") || "200", 10);
+    const workerName = decodeURIComponent(workerLogMatch[1]);
+    const lines = parseInt(parsedUrl.searchParams.get("lines") || "200", 10);
+    const content = readWorkerLogTail(teamName, workerName, Math.min(lines, 2000));
+    json(res, 200, { content });
+    return true;
+  }
+
+  // GET /api/team/logs
+  if (method === "GET" && parsedUrl.pathname === "/api/team/logs") {
+    const teamName = getActiveTeam();
+    if (!teamName) {
+      json(res, 200, { content: "" });
+      return true;
+    }
+    const lines = parseInt(parsedUrl.searchParams.get("lines") || "200", 10);
     const content = readLogTail(teamName, Math.min(lines, 2000));
     json(res, 200, { content });
     return true;

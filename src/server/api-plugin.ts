@@ -15,7 +15,15 @@ export function apiPlugin(): Plugin {
   function broadcast(event: { type: string }) {
     const data = `data: ${JSON.stringify(event)}\n\n`;
     for (const client of sseClients) {
-      client.write(data);
+      try {
+        if (!client.writable) {
+          sseClients.delete(client);
+          continue;
+        }
+        client.write(data);
+      } catch {
+        sseClients.delete(client);
+      }
     }
   }
 
@@ -97,6 +105,21 @@ export function apiPlugin(): Plugin {
       // Initial team watcher setup
       syncTeamWatchers();
 
+      // SSE heartbeat — keeps connections alive and detects dead clients
+      setInterval(() => {
+        for (const client of sseClients) {
+          try {
+            if (!client.writable) {
+              sseClients.delete(client);
+              continue;
+            }
+            client.write(": heartbeat\n\n");
+          } catch {
+            sseClients.delete(client);
+          }
+        }
+      }, 30_000);
+
       // Pass server port to routes once httpServer is listening
       server.httpServer?.on("listening", () => {
         const addr = server.httpServer?.address();
@@ -122,6 +145,9 @@ export function apiPlugin(): Plugin {
           res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
           sseClients.add(res);
 
+          res.on("error", () => {
+            sseClients.delete(res);
+          });
           req.on("close", () => {
             sseClients.delete(res);
           });

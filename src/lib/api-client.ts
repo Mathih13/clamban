@@ -72,7 +72,7 @@ export const api = {
   // Team APIs
   getTeam: () => request<TeamResponse>("/team"),
 
-  connectTeam: (config: { teamName: string; projectDir: string; model?: string; maxTurns?: number }) =>
+  connectTeam: (config: { teamName: string; projectDir: string; model?: string; workerModel?: string; maxTurns?: number }) =>
     request<{ ok: boolean; config: TeamConfig }>("/team/connect", {
       method: "POST",
       body: JSON.stringify(config),
@@ -92,4 +92,10 @@ export const api = {
 
   getTeamLogs: (lines = 200) =>
     request<{ content: string }>(`/team/logs?lines=${lines}`),
+
+  getWorkerLogNames: () =>
+    request<{ workers: string[] }>("/team/worker-logs"),
+
+  getWorkerLog: (name: string, lines = 200) =>
+    request<{ content: string }>(`/team/worker-logs/${encodeURIComponent(name)}?lines=${lines}`),
 };

@@ -165,7 +165,7 @@ function App() {
   }, [teamConnected]);
 
   const handleTeamConnect = useCallback(
-    async (config: { teamName: string; projectDir: string; model?: string; maxTurns?: number }) => {
+    async (config: { teamName: string; projectDir: string; model?: string; workerModel?: string; maxTurns?: number }) => {
       await connectTeam(config);
       setTeamPanelOpen(true);
     },
