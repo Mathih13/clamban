@@ -21,6 +21,35 @@ export interface TaskRef {
   type: RefType;
 }
 
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface Question {
+  id: string;
+  author: string;
+  text: string;
+  details?: string;
+  options?: QuestionOption[];
+  multiSelect?: boolean;
+  answer?: string;
+  askedAt: string;
+  answeredAt?: string;
+}
+
+export interface Budget {
+  turns?: number;
+  wallClockMinutes?: number;
+}
+
+export interface Validation {
+  build?: string;
+  test?: string;
+  typecheck?: string;
+  lint?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -33,6 +62,8 @@ export interface Task {
   comments: Comment[];
   context: FileContext[];
   refs: TaskRef[];
+  questions: Question[];
+  budget?: Budget;
   assignee?: string;
   branch?: string;
   createdAt: string;
@@ -45,6 +76,8 @@ export interface TeamConfig {
   model?: string;
   workerModel?: string;
   maxTurns?: number;
+  defaultBudget?: Budget;
+  validation?: Validation;
 }
 
 export interface BoardMeta {

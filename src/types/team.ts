@@ -18,3 +18,14 @@ export interface TeamState {
   stoppedAt?: string;
   running: boolean;
 }
+
+export interface WorkerProcess {
+  name: string;
+  pid: number;
+  taskId: string;
+  branch: string;
+  worktreePath: string;
+  startedAt: string;
+  logPath: string;
+  lastEventAt: number;
+}

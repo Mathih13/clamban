@@ -1,12 +1,17 @@
-import type { Board, Task, Comment, TeamConfig, RefType } from "@/types/board";
+import type {
+  Board,
+  Task,
+  Comment,
+  Question,
+  TeamConfig,
+  Validation,
+  RefType,
+} from "@/types/board";
 import type { TeamState } from "@/types/team";
 
 const BASE = "/api";
 
-async function request<T>(
-  path: string,
-  options?: RequestInit
-): Promise<T> {
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
@@ -27,8 +32,7 @@ export interface TeamResponse {
 export const api = {
   getBoard: () => request<Board>("/board"),
 
-  getTasksByIds: (ids: string[]) =>
-    request<Task[]>(`/tasks?ids=${ids.join(",")}`),
+  getTasksByIds: (ids: string[]) => request<Task[]>(`/tasks?ids=${ids.join(",")}`),
 
   searchTasks: (q: string, options?: { column?: string; limit?: number }) => {
     const params = new URLSearchParams({ q });
@@ -49,8 +53,7 @@ export const api = {
       body: JSON.stringify(updates),
     }),
 
-  deleteTask: (id: string) =>
-    request<void>(`/tasks/${id}`, { method: "DELETE" }),
+  deleteTask: (id: string) => request<void>(`/tasks/${id}`, { method: "DELETE" }),
 
   addComment: (taskId: string, comment: Omit<Comment, "id" | "timestamp">) =>
     request<Comment>(`/tasks/${taskId}/comments`, {
@@ -72,30 +75,72 @@ export const api = {
   // Team APIs
   getTeam: () => request<TeamResponse>("/team"),
 
-  connectTeam: (config: { teamName: string; projectDir: string; model?: string; workerModel?: string; maxTurns?: number }) =>
+  connectTeam: (config: {
+    teamName: string;
+    projectDir: string;
+    model?: string;
+    workerModel?: string;
+    maxTurns?: number;
+    validation?: Validation;
+  }) =>
     request<{ ok: boolean; config: TeamConfig }>("/team/connect", {
       method: "POST",
       body: JSON.stringify(config),
     }),
 
-  disconnectTeam: () =>
-    request<{ ok: boolean }>("/team/disconnect", { method: "POST" }),
+  disconnectTeam: () => request<{ ok: boolean }>("/team/disconnect", { method: "POST" }),
 
-  startTeam: () =>
-    request<{ ok: boolean; pid: number }>("/team/start", { method: "POST" }),
+  startTeam: () => request<{ ok: boolean; pid: number }>("/team/start", { method: "POST" }),
 
-  stopTeam: () =>
-    request<{ ok: boolean }>("/team/stop", { method: "POST" }),
+  stopTeam: () => request<{ ok: boolean }>("/team/stop", { method: "POST" }),
 
-  getAvailableTeams: () =>
-    request<{ teams: string[] }>("/teams/available"),
+  getAvailableTeams: () => request<{ teams: string[] }>("/teams/available"),
 
-  getTeamLogs: (lines = 200) =>
-    request<{ content: string }>(`/team/logs?lines=${lines}`),
+  getTeamLogs: (lines = 200) => request<{ content: string }>(`/team/logs?lines=${lines}`),
 
-  getWorkerLogNames: () =>
-    request<{ workers: string[] }>("/team/worker-logs"),
+  getWorkerLogNames: () => request<{ workers: string[] }>("/team/worker-logs"),
 
   getWorkerLog: (name: string, lines = 200) =>
     request<{ content: string }>(`/team/worker-logs/${encodeURIComponent(name)}?lines=${lines}`),
+
+  // Question APIs
+  postQuestion: (
+    taskId: string,
+    question: {
+      author: string;
+      text: string;
+      details?: string;
+      options?: Question["options"];
+      multiSelect?: boolean;
+    }
+  ) =>
+    request<Question>(`/tasks/${taskId}/questions`, {
+      method: "POST",
+      body: JSON.stringify(question),
+    }),
+
+  answerQuestion: (taskId: string, questionId: string, answer: string) =>
+    request<Question>(`/tasks/${taskId}/questions/${questionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ answer }),
+    }),
+
+  getPendingQuestions: () =>
+    request<Array<{ taskId: string; taskTitle: string; question: Question }>>("/questions/pending"),
+
+  // Review APIs
+  getTaskDiff: (taskId: string) =>
+    request<{
+      diff: string;
+      stats: { files: number; additions: number; deletions: number };
+    }>(`/tasks/${taskId}/diff`),
+
+  mergeTask: (taskId: string) =>
+    request<{ ok: boolean }>(`/tasks/${taskId}/merge`, { method: "POST" }),
+
+  requestChanges: (taskId: string, feedback: string) =>
+    request<{ ok: boolean }>(`/tasks/${taskId}/request-changes`, {
+      method: "POST",
+      body: JSON.stringify({ feedback }),
+    }),
 };

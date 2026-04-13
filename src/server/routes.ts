@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import { execSync } from "child_process";
 import path from "path";
 import { readBoard, writeBoardSync, setActiveTeam, getActiveTeam } from "./board-store";
-import type { Task, Comment, TeamConfig, RefType } from "../types/board";
+import type { Task, Comment, Question, TeamConfig, RefType } from "../types/board";
 import {
   getTeamState,
   startTeam,
@@ -11,6 +12,9 @@ import {
   readLogTail,
   listWorkerLogs,
   readWorkerLogTail,
+  spawnWorker,
+  killWorker,
+  listRunningWorkers,
 } from "./team-manager";
 
 let serverPort = 5173; // default, updated by api-plugin
@@ -49,10 +53,7 @@ export function onTeamChanged(cb: () => void) {
   teamChangedCallback = cb;
 }
 
-export async function handleRoute(
-  req: IncomingMessage,
-  res: ServerResponse
-): Promise<boolean> {
+export async function handleRoute(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const url = req.url || "";
   const method = req.method || "GET";
 
@@ -69,9 +70,7 @@ export async function handleRoute(
           referencedIds.add(ref.taskId);
         }
       }
-      board.tasks = board.tasks.filter(
-        (t) => t.column !== "done" || referencedIds.has(t.id)
-      );
+      board.tasks = board.tasks.filter((t) => t.column !== "done" || referencedIds.has(t.id));
     }
 
     json(res, 200, board);
@@ -127,13 +126,8 @@ export async function handleRoute(
     const board = readBoard();
     const now = new Date().toISOString();
 
-    const columnTasks = board.tasks.filter(
-      (t) => t.column === (body.column || "backlog")
-    );
-    const maxOrder =
-      columnTasks.length > 0
-        ? Math.max(...columnTasks.map((t) => t.order))
-        : 0;
+    const columnTasks = board.tasks.filter((t) => t.column === (body.column || "backlog"));
+    const maxOrder = columnTasks.length > 0 ? Math.max(...columnTasks.map((t) => t.order)) : 0;
 
     const task: Task = {
       id: generateId(),
@@ -147,6 +141,8 @@ export async function handleRoute(
       comments: [],
       context: [],
       refs: [],
+      questions: [],
+      budget: (body.budget as Task["budget"]) || undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -181,6 +177,7 @@ export async function handleRoute(
       "context",
       "assignee",
       "branch",
+      "budget",
     ] as const;
     for (const key of updatable) {
       if (key in body) {
@@ -259,7 +256,9 @@ export async function handleRoute(
 
     // Reject absolute paths — all paths must be relative to projectDir
     if (path.isAbsolute(rawPath)) {
-      json(res, 400, { error: "Absolute paths are not allowed; use a path relative to projectDir" });
+      json(res, 400, {
+        error: "Absolute paths are not allowed; use a path relative to projectDir",
+      });
       return true;
     }
 
@@ -270,7 +269,10 @@ export async function handleRoute(
 
     // Resolve and verify the path stays within projectDir
     const filePath = path.resolve(projectDir, rawPath);
-    if (!filePath.startsWith(path.resolve(projectDir) + path.sep) && filePath !== path.resolve(projectDir)) {
+    if (
+      !filePath.startsWith(path.resolve(projectDir) + path.sep) &&
+      filePath !== path.resolve(projectDir)
+    ) {
       json(res, 400, { error: "Path escapes projectDir" });
       return true;
     }
@@ -327,11 +329,11 @@ export async function handleRoute(
 
     // Add inverse ref to target task
     const inverseType: Record<RefType, RefType> = {
-      "related": "related",
-      "blocks": "blocked-by",
+      related: "related",
+      blocks: "blocked-by",
       "blocked-by": "blocks",
-      "parent": "child",
-      "child": "parent",
+      parent: "child",
+      child: "parent",
     };
     const inverse = inverseType[refType];
     if (!target.refs.some((r) => r.taskId === id && r.type === inverse)) {
@@ -367,11 +369,11 @@ export async function handleRoute(
       const target = board.tasks.find((t) => t.id === targetId);
       if (target && target.refs) {
         const inverseType: Record<RefType, RefType> = {
-          "related": "related",
-          "blocks": "blocked-by",
+          related: "related",
+          blocks: "blocked-by",
           "blocked-by": "blocks",
-          "parent": "child",
-          "child": "parent",
+          parent: "child",
+          child: "parent",
         };
         const inv = inverseType[removedType];
         const invIdx = target.refs.findIndex((r) => r.taskId === id && r.type === inv);
@@ -382,6 +384,313 @@ export async function handleRoute(
 
     writeBoardSync(board);
     json(res, 200, task);
+    return true;
+  }
+
+  // POST /api/tasks/:id/questions
+  const questionAddMatch = url.match(/^\/api\/tasks\/([^/]+)\/questions$/);
+  if (method === "POST" && questionAddMatch) {
+    const id = questionAddMatch[1];
+    const body = await parseBody(req);
+    const board = readBoard();
+    const task = board.tasks.find((t) => t.id === id);
+    if (!task) {
+      json(res, 404, { error: "Task not found" });
+      return true;
+    }
+
+    const question: Question = {
+      id: generateId(),
+      author: (body.author as string) || "Worker",
+      text: (body.text as string) || "",
+      details: (body.details as string) || undefined,
+      options: body.options as Question["options"],
+      multiSelect: (body.multiSelect as boolean) || undefined,
+      askedAt: new Date().toISOString(),
+    };
+
+    if (!task.questions) task.questions = [];
+    task.questions.push(question);
+    task.updatedAt = new Date().toISOString();
+    writeBoardSync(board);
+    json(res, 201, question);
+    return true;
+  }
+
+  // PATCH /api/tasks/:id/questions/:questionId
+  const questionPatchMatch = url.match(/^\/api\/tasks\/([^/]+)\/questions\/([^/]+)$/);
+  if (method === "PATCH" && questionPatchMatch) {
+    const id = questionPatchMatch[1];
+    const qid = questionPatchMatch[2];
+    const body = await parseBody(req);
+    const board = readBoard();
+    const task = board.tasks.find((t) => t.id === id);
+    if (!task) {
+      json(res, 404, { error: "Task not found" });
+      return true;
+    }
+
+    const question = (task.questions ?? []).find((q) => q.id === qid);
+    if (!question) {
+      json(res, 404, { error: "Question not found" });
+      return true;
+    }
+
+    question.answer = body.answer as string;
+    question.answeredAt = new Date().toISOString();
+    task.updatedAt = new Date().toISOString();
+    writeBoardSync(board);
+    json(res, 200, question);
+    return true;
+  }
+
+  // GET /api/tasks/:id/questions/:questionId — fetch a single question
+  const questionGetMatch = parsedUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/questions\/([^/]+)$/);
+  if (method === "GET" && questionGetMatch) {
+    const id = questionGetMatch[1];
+    const qid = questionGetMatch[2];
+    const board = readBoard();
+    const task = board.tasks.find((t) => t.id === id);
+    if (!task) {
+      json(res, 404, { error: "Task not found" });
+      return true;
+    }
+
+    const question = (task.questions ?? []).find((q) => q.id === qid);
+    if (!question) {
+      json(res, 404, { error: "Question not found" });
+      return true;
+    }
+
+    json(res, 200, question);
+    return true;
+  }
+
+  // GET /api/questions/pending — all unanswered questions across tasks
+  if (method === "GET" && parsedUrl.pathname === "/api/questions/pending") {
+    const board = readBoard();
+    const pending: Array<{
+      taskId: string;
+      taskTitle: string;
+      question: Question;
+    }> = [];
+    for (const task of board.tasks) {
+      for (const q of task.questions ?? []) {
+        if (!q.answer) {
+          pending.push({ taskId: task.id, taskTitle: task.title, question: q });
+        }
+      }
+    }
+    json(res, 200, pending);
+    return true;
+  }
+
+  // --- Worker routes ---
+
+  // POST /api/workers/spawn
+  if (method === "POST" && url === "/api/workers/spawn") {
+    const body = await parseBody(req);
+    const board = readBoard();
+    if (!board.meta.team) {
+      json(res, 400, { error: "No team connected" });
+      return true;
+    }
+    const workerName = body.name as string;
+    const taskId = body.taskId as string;
+    const mode = (body.mode as "plan" | "build") || "plan";
+    if (!workerName || !taskId) {
+      json(res, 400, { error: "name and taskId are required" });
+      return true;
+    }
+    if (mode !== "plan" && mode !== "build") {
+      json(res, 400, { error: 'mode must be "plan" or "build"' });
+      return true;
+    }
+    try {
+      const result = spawnWorker(board.meta.team, workerName, taskId, serverPort, mode);
+      json(res, 201, { ok: true, ...result });
+    } catch (err) {
+      json(res, 409, {
+        error: err instanceof Error ? err.message : "Failed to spawn worker",
+      });
+    }
+    return true;
+  }
+
+  // POST /api/workers/:name/kill
+  const workerKillMatch = url.match(/^\/api\/workers\/([^/]+)\/kill$/);
+  if (method === "POST" && workerKillMatch) {
+    const workerName = decodeURIComponent(workerKillMatch[1]);
+    try {
+      killWorker(workerName);
+      json(res, 200, { ok: true });
+    } catch (err) {
+      json(res, 409, {
+        error: err instanceof Error ? err.message : "Failed to kill worker",
+      });
+    }
+    return true;
+  }
+
+  // GET /api/workers
+  if (method === "GET" && url === "/api/workers") {
+    json(res, 200, { workers: listRunningWorkers() });
+    return true;
+  }
+
+  // --- Review routes ---
+
+  // GET /api/tasks/:id/diff
+  const diffMatch = parsedUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/diff$/);
+  if (method === "GET" && diffMatch) {
+    const id = diffMatch[1];
+    const board = readBoard();
+    const task = board.tasks.find((t) => t.id === id);
+    if (!task) {
+      json(res, 404, { error: "Task not found" });
+      return true;
+    }
+    if (!task.branch) {
+      json(res, 404, { error: "Task has no branch" });
+      return true;
+    }
+    const projectDir = board.meta.team?.projectDir;
+    if (!projectDir) {
+      json(res, 400, { error: "No team connected" });
+      return true;
+    }
+
+    try {
+      const diff = execSync(`git diff main...${task.branch}`, {
+        cwd: projectDir,
+        stdio: "pipe",
+        maxBuffer: 50 * 1024 * 1024,
+      }).toString();
+
+      const statOutput = execSync(`git diff --stat main...${task.branch}`, {
+        cwd: projectDir,
+        stdio: "pipe",
+      }).toString();
+
+      // Parse stats from the summary line: " 3 files changed, 42 insertions(+), 18 deletions(-)"
+      const statMatch = statOutput.match(
+        /(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/
+      );
+      const stats = {
+        files: statMatch ? parseInt(statMatch[1], 10) : 0,
+        additions: statMatch && statMatch[2] ? parseInt(statMatch[2], 10) : 0,
+        deletions: statMatch && statMatch[3] ? parseInt(statMatch[3], 10) : 0,
+      };
+
+      json(res, 200, { diff, stats });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      json(res, 500, { error: `Failed to get diff: ${msg.slice(0, 200)}` });
+    }
+    return true;
+  }
+
+  // POST /api/tasks/:id/merge
+  const mergeMatch = parsedUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/merge$/);
+  if (method === "POST" && mergeMatch) {
+    const id = mergeMatch[1];
+    const board = readBoard();
+    const task = board.tasks.find((t) => t.id === id);
+    if (!task) {
+      json(res, 404, { error: "Task not found" });
+      return true;
+    }
+    if (!task.branch) {
+      json(res, 400, { error: "Task has no branch" });
+      return true;
+    }
+    const projectDir = board.meta.team?.projectDir;
+    if (!projectDir) {
+      json(res, 400, { error: "No team connected" });
+      return true;
+    }
+
+    try {
+      execSync(`git merge ${task.branch} --no-edit`, {
+        cwd: projectDir,
+        stdio: "pipe",
+      });
+
+      // Clean up worktree and branch (best-effort)
+      try {
+        const worktreePath = path.join(projectDir, ".clamban-worktrees");
+        const entries = require("fs")
+          .readdirSync(worktreePath)
+          .filter((e: string) => e.includes(task.branch!.split("/").pop()!));
+        for (const entry of entries) {
+          const fullPath = path.join(worktreePath, entry);
+          try {
+            execSync(`git worktree remove --force "${fullPath}"`, {
+              cwd: projectDir,
+              stdio: "pipe",
+            });
+          } catch {}
+        }
+      } catch {}
+      try {
+        execSync(`git branch -D "${task.branch}"`, { cwd: projectDir, stdio: "pipe" });
+      } catch {}
+
+      // Update board: move to done + add comment
+      const freshBoard = readBoard();
+      const freshTask = freshBoard.tasks.find((t) => t.id === id);
+      if (freshTask) {
+        freshTask.column = "done";
+        freshTask.updatedAt = new Date().toISOString();
+        freshTask.comments.push({
+          id: generateId(),
+          author: "Human Pilot",
+          text: "Reviewed and merged by human pilot.",
+          timestamp: new Date().toISOString(),
+        });
+        writeBoardSync(freshBoard);
+      }
+
+      json(res, 200, { ok: true });
+    } catch (err) {
+      const e = err as { stderr?: Buffer; stdout?: Buffer };
+      const output = (e.stderr?.toString() ?? "") + (e.stdout?.toString() ?? "");
+      json(res, 409, {
+        error: "Merge conflict",
+        output: output.slice(0, 2000),
+      });
+    }
+    return true;
+  }
+
+  // POST /api/tasks/:id/request-changes
+  const reqChangesMatch = parsedUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/request-changes$/);
+  if (method === "POST" && reqChangesMatch) {
+    const id = reqChangesMatch[1];
+    const body = await parseBody(req);
+    const feedback = (body.feedback as string) || "";
+    if (!feedback.trim()) {
+      json(res, 400, { error: "feedback is required" });
+      return true;
+    }
+
+    const board = readBoard();
+    const task = board.tasks.find((t) => t.id === id);
+    if (!task) {
+      json(res, 404, { error: "Task not found" });
+      return true;
+    }
+
+    task.column = "in-progress";
+    task.updatedAt = new Date().toISOString();
+    task.comments.push({
+      id: generateId(),
+      author: "Human Pilot",
+      text: `[CHANGES_REQUESTED] ${feedback.trim()}`,
+      timestamp: new Date().toISOString(),
+    });
+    writeBoardSync(board);
+    json(res, 200, { ok: true });
     return true;
   }
 
@@ -409,6 +718,8 @@ export async function handleRoute(
       model: (body.model as string) || "sonnet",
       workerModel: (body.workerModel as string) || "sonnet",
       maxTurns: (body.maxTurns as number) || 1000,
+      defaultBudget: (body.defaultBudget as TeamConfig["defaultBudget"]) || undefined,
+      validation: (body.validation as TeamConfig["validation"]) || undefined,
     };
 
     if (!teamConfig.teamName || !teamConfig.projectDir) {
