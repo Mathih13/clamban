@@ -172,47 +172,26 @@ export function buildLeadPrompt(teamName: string, port: number): string {
       ? memberNames.map((n) => `  - "${n}"`).join("\n")
       : "  (no members yet — spawn workers via the Task tool and name them)";
 
-  return `You are the team lead for team "${teamName}". You manage a kanban board via HTTP API at http://localhost:${port}.
-
-Your job is to process the board and manage tasks through their lifecycle. You work autonomously.
-
-## Team Members
-These are the workers on your team. ALWAYS assign tasks to one of these names:
-${memberList}
-
-Do NOT invent new worker names. Use the exact names listed above when setting the "assignee" field and when spawning workers via the Task tool (use the member name as the Task "name" parameter).
+  return `You are the team lead. You manage a kanban board via HTTP API and process tasks through their lifecycle autonomously.
 
 ## API Reference
+Base URL for all endpoints: http://localhost:${port}. All mutations use -H 'Content-Type: application/json'.
 
-Fetch board:
-  curl -s 'http://localhost:${port}/api/board?excludeDone=true'
+Board summary (use this for your initial scan — lightweight, no descriptions/comments):
+  curl -s /api/board/summary
+Returns: tasks[] with {id, title, column, priority, type, tags, assignee, branch, commentCount, hasUnansweredQuestions, hasPlan, hasValidationPassed, hasValidationFailed}
 
-Move task from backlog to ready:
-  curl -s -X PATCH http://localhost:${port}/api/tasks/TASK_ID -H 'Content-Type: application/json' -d '{"column":"ready"}'
+Full task details (fetch only the tasks you need to act on):
+  curl -s '/api/tasks?ids=ID1,ID2'
 
-Move task to in-progress AND set assignee (ALWAYS include BOTH fields together):
-  curl -s -X PATCH http://localhost:${port}/api/tasks/TASK_ID -H 'Content-Type: application/json' -d '{"column":"in-progress","assignee":"${memberNames[0] || "worker-1"}"}'
-
-Move task to review:
-  curl -s -X PATCH http://localhost:${port}/api/tasks/TASK_ID -H 'Content-Type: application/json' -d '{"column":"review"}'
-
-Move task to done:
-  curl -s -X PATCH http://localhost:${port}/api/tasks/TASK_ID -H 'Content-Type: application/json' -d '{"column":"done"}'
-
-Add comment:
-  curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/comments -H 'Content-Type: application/json' -d '{"author":"Team Lead","text":"Your comment here"}'
-
-Create a new task (returns the created task with its ID):
-  curl -s -X POST http://localhost:${port}/api/tasks -H 'Content-Type: application/json' -d '{"title":"Task title","description":"Details...","column":"backlog","priority":"medium","type":"task","tags":[]}'
-
-Link two tasks (type: "related", "blocks", "blocked-by", "parent", "child"):
-  curl -s -X POST http://localhost:${port}/api/tasks/TASK_ID/refs -H 'Content-Type: application/json' -d '{"taskId":"OTHER_TASK_ID","type":"related"}'
-
-Search tasks (find related done tasks by keyword):
-  curl -s 'http://localhost:${port}/api/tasks/search?q=KEYWORD&column=done&limit=5'
-
-Fetch tasks by IDs (e.g. to look up refs):
-  curl -s 'http://localhost:${port}/api/tasks?ids=ID1,ID2,ID3'
+PATCH task: curl -s -X PATCH /api/tasks/ID -d '{"column":"ready"}' — updatable fields: column, assignee, priority, type, tags, branch, budget
+POST comment: curl -s -X POST /api/tasks/ID/comments -d '{"author":"Team Lead","text":"..."}'
+POST task: curl -s -X POST /api/tasks -d '{"title":"...","description":"...","column":"backlog","priority":"medium","type":"task","tags":[]}'
+POST ref: curl -s -X POST /api/tasks/ID/refs -d '{"taskId":"OTHER_ID","type":"related"}' — types: related, blocks, blocked-by, parent, child
+Search done: curl -s '/api/tasks/search?q=KEYWORD&column=done&limit=5'
+Spawn worker: curl -s -X POST /api/workers/spawn -d '{"name":"...","taskId":"...","mode":"plan|build"}'
+List workers: curl -s /api/workers
+Answer question: curl -s -X PATCH /api/tasks/ID/questions/QID -d '{"answer":"Approve"}'
 
 ## Task Lifecycle
 
@@ -344,11 +323,12 @@ When deciding tags, add "review-required" if the task:
 For self-contained features, bug fixes, and simple changes, "review-required" is NOT needed.
 
 ## Single Cycle
-1. Fetch the board: curl -s 'http://localhost:${port}/api/board?excludeDone=true'
-2. Process each column as described above
-3. After all actions, you are DONE — exit normally
-4. Do NOT loop or wait. Process the board once and stop.
-5. You will be re-invoked automatically when the board changes.
+1. Fetch the board summary: curl -s 'http://localhost:${port}/api/board/summary'
+2. For tasks you need to act on, fetch full details: curl -s '/api/tasks?ids=ID1,ID2'
+3. Process each column as described above
+4. After all actions, you are DONE — exit normally
+5. Do NOT loop or wait. Process the board once and stop.
+6. You will be re-invoked automatically when the board changes.
 
 ## Worker Spawning (via HTTP, not the Task tool)
 Workers are spawned as separate Claude CLI processes via the Clamban API. Do NOT use the Task tool to spawn workers.
@@ -392,7 +372,14 @@ After spawning a worker, you should:
 - You can spawn multiple workers in parallel for independent tasks
 - Proactively create new tasks when you notice follow-up work, bugs, or improvements — don't let knowledge get lost
 
-Start by fetching the board now.`;
+## Current Session Context
+Team: "${teamName}"
+Workers on this team (use ONLY these names for assignee and spawning):
+${memberList}
+
+Do NOT invent new worker names. Use the exact names listed above.
+
+Start by fetching the board summary now.`;
 }
 
 export function buildPlannerPrompt(
@@ -428,12 +415,13 @@ Read the title, description, file context, refs, and ANY existing answered quest
 If the task has refs, fetch them too:
   curl -s 'http://localhost:${port}/api/tasks?ids=REF_ID1,REF_ID2'
 
-### Step 2: Explore the codebase
-Use Read, Glob, Grep, Bash (read-only commands) to understand:
-- What already exists in the codebase
-- What patterns and conventions are used
-- What dependencies are available (package.json, etc.)
-- What files you would need to create or modify
+### Step 2: Explore the codebase (bounded)
+Use Read, Glob, Grep, Bash (read-only commands) to understand the relevant parts of the codebase. Be efficient with your exploration:
+- Start with package.json and any files listed in the task's context field
+- Use Glob/Grep to find related files rather than reading everything
+- Read at most 10-15 files during exploration — focus on the files you would actually modify
+- Prioritize: existing patterns/conventions, dependency versions, related component shapes
+- Do NOT read entire directories or every file in a module — targeted reads only
 
 ### Step 3: Ask questions (use the grill-me approach)
 This is CRITICAL. Interview the human pilot relentlessly about every aspect of the plan that involves real-world context, business logic, or design preferences that you cannot determine from code alone. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one.
@@ -673,10 +661,10 @@ function spawnCycle(): void {
     return;
   }
 
-  const model = config.model || "sonnet";
+  const model = config.model || "haiku";
   const cycleTurns = turnGovernor
-    ? turnGovernor.allocateCycleBudget(50)
-    : Math.min(50, remainingBudget);
+    ? turnGovernor.allocateCycleBudget(15)
+    : Math.min(15, remainingBudget);
   const prompt = buildLeadPrompt(config.teamName, port);
 
   ensureDir(LOGS_DIR);
@@ -700,7 +688,6 @@ function spawnCycle(): void {
       String(cycleTurns),
       "--output-format",
       "stream-json",
-      "--verbose",
     ],
     {
       cwd: config.projectDir,
@@ -799,12 +786,12 @@ function spawnCycle(): void {
       return;
     }
 
-    // Board changed while we were running — respawn after short debounce
+    // Board changed while we were running — respawn after debounce
     if (pendingBoardChange) {
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
         spawnCycle();
-      }, 1000);
+      }, 5000);
       currentOnExit?.();
       return;
     }
@@ -821,7 +808,7 @@ function spawnCycle(): void {
         debounceTimer = setTimeout(() => {
           debounceTimer = null;
           spawnCycle();
-        }, 5000);
+        }, 30000);
         currentOnExit?.();
         return;
       }
@@ -946,14 +933,14 @@ export function notifyBoardChanged(): void {
     return;
   }
 
-  // Idle — debounce 3s then spawn a new cycle
+  // Idle — debounce 30s then spawn a new cycle
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
     if (teamActive && !leadProcess) {
       spawnCycle();
     }
-  }, 3000);
+  }, 30000);
 }
 
 export function listAvailableTeams(): string[] {
@@ -1529,7 +1516,7 @@ export function spawnWorker(
 
   // Build the prompt
   const model = config.workerModel || "sonnet";
-  const cycleTurns = turnGovernor ? turnGovernor.allocateCycleBudget(100) : 100;
+  const cycleTurns = turnGovernor ? turnGovernor.allocateCycleBudget(50) : 50;
   const prompt =
     mode === "plan"
       ? buildPlannerPrompt(workerName, taskId, branch, worktreePath, port)

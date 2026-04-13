@@ -37,7 +37,7 @@ export function TeamConnectDialog({ open, onOpenChange, onConnect }: TeamConnect
   const [availableTeams, setAvailableTeams] = useState<string[]>([]);
   const [teamName, setTeamName] = useState("");
   const [projectDir, setProjectDir] = useState("");
-  const [model, setModel] = useState("sonnet");
+  const [model, setModel] = useState("haiku");
   const [workerModel, setWorkerModel] = useState("sonnet");
   const [buildCommand, setBuildCommand] = useState("");
   const [testCommand, setTestCommand] = useState("");

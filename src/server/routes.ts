@@ -77,6 +77,30 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
     return true;
   }
 
+  // GET /api/board/summary — lightweight board view for the team lead
+  if (method === "GET" && parsedUrl.pathname === "/api/board/summary") {
+    const board = readBoard();
+    const tasks = board.tasks
+      .filter((t) => t.column !== "done")
+      .map((t) => ({
+        id: t.id,
+        title: t.title,
+        column: t.column,
+        priority: t.priority,
+        type: t.type,
+        tags: t.tags,
+        assignee: t.assignee,
+        branch: t.branch,
+        commentCount: t.comments.length,
+        hasUnansweredQuestions: (t.questions ?? []).some((q) => !q.answer),
+        hasPlan: t.comments.some((c) => c.text.startsWith("[PLAN]")),
+        hasValidationPassed: t.comments.some((c) => c.text.includes("[VALIDATION_PASSED]")),
+        hasValidationFailed: t.comments.some((c) => c.text.includes("[VALIDATION_FAILED]")),
+      }));
+    json(res, 200, { tasks });
+    return true;
+  }
+
   // GET /api/tasks/search
   if (method === "GET" && parsedUrl.pathname === "/api/tasks/search") {
     const q = parsedUrl.searchParams.get("q");
@@ -715,7 +739,7 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
     const teamConfig: TeamConfig = {
       teamName: (body.teamName as string) || "",
       projectDir: (body.projectDir as string) || "",
-      model: (body.model as string) || "sonnet",
+      model: (body.model as string) || "haiku",
       workerModel: (body.workerModel as string) || "sonnet",
       maxTurns: (body.maxTurns as number) || 1000,
       defaultBudget: (body.defaultBudget as TeamConfig["defaultBudget"]) || undefined,
