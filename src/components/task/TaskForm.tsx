@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { COLUMNS, PRIORITY_CONFIG, TASK_TYPE_CONFIG } from "@/lib/constants";
-import type { Task, ColumnId, Priority, TaskType, RefType } from "@/types/board";
+import type { Task, Budget, ColumnId, Priority, TaskType, RefType } from "@/types/board";
 
 const REF_LABELS: Record<RefType, string> = {
   related: "Related to",
@@ -49,11 +49,19 @@ interface TaskFormProps {
     type: TaskType;
     tags: string[];
     assignee?: string;
+    budget?: Budget;
     pendingRefs?: PendingRef[];
   }) => void;
 }
 
-export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSubmit }: TaskFormProps) {
+export function TaskForm({
+  open,
+  onOpenChange,
+  task,
+  allTasks,
+  memberNames,
+  onSubmit,
+}: TaskFormProps) {
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [column, setColumn] = useState<ColumnId>(task?.column ?? "backlog");
@@ -61,6 +69,12 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
   const [type, setType] = useState<TaskType>(task?.type ?? "task");
   const [tagsInput, setTagsInput] = useState(task?.tags.join(", ") ?? "");
   const [assignee, setAssignee] = useState(task?.assignee ?? "");
+  const [budgetTurns, setBudgetTurns] = useState(
+    task?.budget?.turns != null ? String(task.budget.turns) : ""
+  );
+  const [budgetMinutes, setBudgetMinutes] = useState(
+    task?.budget?.wallClockMinutes != null ? String(task.budget.wallClockMinutes) : ""
+  );
   const [refs, setRefs] = useState<PendingRef[]>([]);
   const [refTarget, setRefTarget] = useState("");
   const [refType, setRefType] = useState<RefType>("related");
@@ -69,9 +83,7 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
 
   // Tasks available to link (exclude self when editing, exclude already-added)
   const linkedIds = new Set(refs.map((r) => r.taskId));
-  const linkable = (allTasks ?? []).filter(
-    (t) => t.id !== task?.id && !linkedIds.has(t.id)
-  );
+  const linkable = (allTasks ?? []).filter((t) => t.id !== task?.id && !linkedIds.has(t.id));
 
   function handleAddRef() {
     if (!refTarget) return;
@@ -91,6 +103,17 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
+
+    const parsedTurns = budgetTurns.trim() ? parseInt(budgetTurns, 10) : NaN;
+    const parsedMinutes = budgetMinutes.trim() ? parseInt(budgetMinutes, 10) : NaN;
+    const budget: Budget | undefined =
+      Number.isFinite(parsedTurns) || Number.isFinite(parsedMinutes)
+        ? {
+            turns: Number.isFinite(parsedTurns) ? parsedTurns : undefined,
+            wallClockMinutes: Number.isFinite(parsedMinutes) ? parsedMinutes : undefined,
+          }
+        : undefined;
+
     onSubmit({
       title: title.trim(),
       description,
@@ -99,6 +122,7 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
       type,
       tags,
       assignee: assignee.trim() || undefined,
+      budget,
       pendingRefs: refs.length > 0 ? refs : undefined,
     });
     onOpenChange(false);
@@ -110,6 +134,8 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
       setType("task");
       setTagsInput("");
       setAssignee("");
+      setBudgetTurns("");
+      setBudgetMinutes("");
       setRefs([]);
     }
   }
@@ -121,9 +147,7 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
           <DialogHeader>
             <DialogTitle>{isEdit ? "Edit Task" : "New Task"}</DialogTitle>
             <DialogDescription>
-              {isEdit
-                ? "Update the task details below."
-                : "Fill in the details for your new task."}
+              {isEdit ? "Update the task details below." : "Fill in the details for your new task."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -170,13 +194,16 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {(Object.entries(PRIORITY_CONFIG) as [Priority, typeof PRIORITY_CONFIG[Priority]][]).map(
-                      ([key, cfg]) => (
-                        <SelectItem key={key} value={key}>
-                          {cfg.label}
-                        </SelectItem>
-                      )
-                    )}
+                    {(
+                      Object.entries(PRIORITY_CONFIG) as [
+                        Priority,
+                        (typeof PRIORITY_CONFIG)[Priority],
+                      ][]
+                    ).map(([key, cfg]) => (
+                      <SelectItem key={key} value={key}>
+                        {cfg.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -187,13 +214,16 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {(Object.entries(TASK_TYPE_CONFIG) as [TaskType, typeof TASK_TYPE_CONFIG[TaskType]][]).map(
-                      ([key, cfg]) => (
-                        <SelectItem key={key} value={key}>
-                          {cfg.label}
-                        </SelectItem>
-                      )
-                    )}
+                    {(
+                      Object.entries(TASK_TYPE_CONFIG) as [
+                        TaskType,
+                        (typeof TASK_TYPE_CONFIG)[TaskType],
+                      ][]
+                    ).map(([key, cfg]) => (
+                      <SelectItem key={key} value={key}>
+                        {cfg.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -211,7 +241,10 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
               <div className="grid gap-2">
                 <Label>Assignee</Label>
                 {memberNames && memberNames.length > 0 ? (
-                  <Select value={assignee || "_none"} onValueChange={(v) => setAssignee(v === "_none" ? "" : v)}>
+                  <Select
+                    value={assignee || "_none"}
+                    onValueChange={(v) => setAssignee(v === "_none" ? "" : v)}
+                  >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Unassigned" />
                     </SelectTrigger>
@@ -234,6 +267,30 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
                 )}
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="budgetTurns">Turn Budget</Label>
+                <Input
+                  id="budgetTurns"
+                  type="number"
+                  min="1"
+                  value={budgetTurns}
+                  onChange={(e) => setBudgetTurns(e.target.value)}
+                  placeholder="50 (default)"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="budgetMinutes">Wall-Clock Minutes</Label>
+                <Input
+                  id="budgetMinutes"
+                  type="number"
+                  min="1"
+                  value={budgetMinutes}
+                  onChange={(e) => setBudgetMinutes(e.target.value)}
+                  placeholder="30 (default)"
+                />
+              </div>
+            </div>
             {linkable.length > 0 && (
               <div className="grid gap-2">
                 <Label>Linked Tasks</Label>
@@ -242,11 +299,18 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
                     {refs.map((ref) => {
                       const target = (allTasks ?? []).find((t) => t.id === ref.taskId);
                       return (
-                        <div key={ref.taskId} className="flex items-center gap-1.5 text-xs rounded bg-muted/50 px-2 py-1">
+                        <div
+                          key={ref.taskId}
+                          className="flex items-center gap-1.5 text-xs rounded bg-muted/50 px-2 py-1"
+                        >
                           <Link2 className="size-3 shrink-0 text-muted-foreground" />
                           <span className="text-muted-foreground">{REF_LABELS[ref.type]}</span>
                           <span className="truncate flex-1">{target?.title ?? ref.taskId}</span>
-                          <button type="button" onClick={() => handleRemoveRef(ref.taskId)} className="shrink-0 text-muted-foreground hover:text-destructive">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveRef(ref.taskId)}
+                            className="shrink-0 text-muted-foreground hover:text-destructive"
+                          >
                             <X className="size-3" />
                           </button>
                         </div>
@@ -261,16 +325,23 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
                     </SelectTrigger>
                     <SelectContent>
                       {(Object.entries(REF_LABELS) as [RefType, string][]).map(([key, label]) => (
-                        <SelectItem key={key} value={key}>{label}</SelectItem>
+                        <SelectItem key={key} value={key}>
+                          {label}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <Select value={refTarget || "_none"} onValueChange={(v) => setRefTarget(v === "_none" ? "" : v)}>
+                  <Select
+                    value={refTarget || "_none"}
+                    onValueChange={(v) => setRefTarget(v === "_none" ? "" : v)}
+                  >
                     <SelectTrigger className="flex-1 h-8 text-xs">
                       <SelectValue placeholder="Select task..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="_none" disabled>Select task...</SelectItem>
+                      <SelectItem value="_none" disabled>
+                        Select task...
+                      </SelectItem>
                       {linkable.map((t) => (
                         <SelectItem key={t.id} value={t.id}>
                           <span className="truncate">{t.title}</span>
@@ -278,7 +349,14 @@ export function TaskForm({ open, onOpenChange, task, allTasks, memberNames, onSu
                       ))}
                     </SelectContent>
                   </Select>
-                  <Button type="button" size="sm" variant="outline" className="h-8 text-xs px-2" onClick={handleAddRef} disabled={!refTarget}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs px-2"
+                    onClick={handleAddRef}
+                    disabled={!refTarget}
+                  >
                     <Link2 className="size-3" />
                   </Button>
                 </div>

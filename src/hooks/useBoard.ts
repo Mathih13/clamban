@@ -60,58 +60,45 @@ export function useBoard() {
     fetchBoard();
   }, [fetchBoard]);
 
-  const createTask = useCallback(
-    async (task: Partial<Task>) => {
-      justWroteRef.current = true;
-      const created = await api.createTask(task);
-      setBoard((prev) =>
-        prev ? { ...prev, tasks: [...prev.tasks, created] } : prev
-      );
-      return created;
-    },
-    []
-  );
+  const createTask = useCallback(async (task: Partial<Task>) => {
+    justWroteRef.current = true;
+    const created = await api.createTask(task);
+    setBoard((prev) => (prev ? { ...prev, tasks: [...prev.tasks, created] } : prev));
+    return created;
+  }, []);
 
-  const updateTask = useCallback(
-    async (id: string, updates: Partial<Task>) => {
-      justWroteRef.current = true;
-      const updated = await api.updateTask(id, updates);
-      setBoard((prev) =>
-        prev
-          ? {
-              ...prev,
-              tasks: prev.tasks.map((t) => (t.id === id ? updated : t)),
-            }
-          : prev
-      );
-      return updated;
-    },
-    []
-  );
+  const updateTask = useCallback(async (id: string, updates: Partial<Task>) => {
+    justWroteRef.current = true;
+    const updated = await api.updateTask(id, updates);
+    setBoard((prev) =>
+      prev
+        ? {
+            ...prev,
+            tasks: prev.tasks.map((t) => (t.id === id ? updated : t)),
+          }
+        : prev
+    );
+    return updated;
+  }, []);
 
   const deleteTask = useCallback(async (id: string) => {
     justWroteRef.current = true;
     await api.deleteTask(id);
-    setBoard((prev) =>
-      prev ? { ...prev, tasks: prev.tasks.filter((t) => t.id !== id) } : prev
-    );
+    setBoard((prev) => (prev ? { ...prev, tasks: prev.tasks.filter((t) => t.id !== id) } : prev));
   }, []);
 
-  const moveTask = useCallback(
-    async (id: string, column: ColumnId, order: number) => {
-      justWroteRef.current = true;
-      const updated = await api.updateTask(id, { column, order });
-      setBoard((prev) =>
-        prev
-          ? {
-              ...prev,
-              tasks: prev.tasks.map((t) => (t.id === id ? updated : t)),
-            }
-          : prev
-      );
-    },
-    []
-  );
+  const moveTask = useCallback(async (id: string, column: ColumnId, order: number) => {
+    justWroteRef.current = true;
+    const updated = await api.updateTask(id, { column, order });
+    setBoard((prev) =>
+      prev
+        ? {
+            ...prev,
+            tasks: prev.tasks.map((t) => (t.id === id ? updated : t)),
+          }
+        : prev
+    );
+  }, []);
 
   const addComment = useCallback(
     async (taskId: string, comment: Omit<Comment, "id" | "timestamp">) => {
@@ -122,9 +109,7 @@ export function useBoard() {
           ? {
               ...prev,
               tasks: prev.tasks.map((t) =>
-                t.id === taskId
-                  ? { ...t, comments: [...t.comments, created] }
-                  : t
+                t.id === taskId ? { ...t, comments: [...t.comments, created] } : t
               ),
             }
           : prev
@@ -154,13 +139,38 @@ export function useBoard() {
     [fetchBoard]
   );
 
+  const answerQuestion = useCallback(async (taskId: string, questionId: string, answer: string) => {
+    justWroteRef.current = true;
+    const updated = await api.answerQuestion(taskId, questionId, answer);
+    setBoard((prev) =>
+      prev
+        ? {
+            ...prev,
+            tasks: prev.tasks.map((t) =>
+              t.id === taskId
+                ? {
+                    ...t,
+                    questions: (t.questions ?? []).map((q) =>
+                      q.id === questionId
+                        ? { ...q, answer: updated.answer, answeredAt: updated.answeredAt }
+                        : q
+                    ),
+                  }
+                : t
+            ),
+          }
+        : prev
+    );
+    return updated;
+  }, []);
+
   const getTasksByColumn = useCallback(
     (columnId: ColumnId): Task[] => {
       if (!board) return [];
       const tasks = board.tasks.filter((t) => t.column === columnId);
       if (columnId === "done") {
-        return tasks.sort((a, b) =>
-          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+        return tasks.sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
         );
       }
       return tasks.sort((a, b) => a.order - b.order);
@@ -178,6 +188,7 @@ export function useBoard() {
     addComment,
     addRef,
     removeRef,
+    answerQuestion,
     getTasksByColumn,
     refetch: fetchBoard,
   };

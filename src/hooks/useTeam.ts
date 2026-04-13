@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api, type TeamResponse } from "@/lib/api-client";
+import type { Validation } from "@/types/board";
 import { toast } from "sonner";
 
 export function useTeam() {
@@ -41,7 +42,14 @@ export function useTeam() {
   }, [fetchTeam]);
 
   const connect = useCallback(
-    async (config: { teamName: string; projectDir: string; model?: string; workerModel?: string; maxTurns?: number }) => {
+    async (config: {
+      teamName: string;
+      projectDir: string;
+      model?: string;
+      workerModel?: string;
+      maxTurns?: number;
+      validation?: Validation;
+    }) => {
       await api.connectTeam(config);
       await fetchTeam();
       toast.success("Team connected");

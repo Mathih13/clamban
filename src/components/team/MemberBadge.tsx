@@ -22,10 +22,11 @@ const STATUS_LABELS: Record<AgentStatus, string> = {
 interface MemberBadgeProps {
   name: string;
   status: AgentStatus;
+  model?: string;
   currentTaskTitle?: string;
 }
 
-export function MemberBadge({ name, status, currentTaskTitle }: MemberBadgeProps) {
+export function MemberBadge({ name, status, model, currentTaskTitle }: MemberBadgeProps) {
   const initials = name
     .split("-")
     .map((s) => s[0]?.toUpperCase() ?? "")
@@ -64,6 +65,9 @@ export function MemberBadge({ name, status, currentTaskTitle }: MemberBadgeProps
         <TooltipContent>
           <p className="font-medium">{name}</p>
           <p className="text-xs text-muted-foreground capitalize">{status}</p>
+          {model && (
+            <p className="text-xs text-muted-foreground">Model: <span className="capitalize">{model}</span></p>
+          )}
           {currentTaskTitle && (
             <p className="text-xs text-muted-foreground">Working on: {currentTaskTitle}</p>
           )}

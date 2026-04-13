@@ -2,13 +2,24 @@ import { useState, useCallback } from "react";
 import { Toaster, toast } from "sonner";
 import { useBoard } from "@/hooks/useBoard";
 import { useTeam } from "@/hooks/useTeam";
+import { api } from "@/lib/api-client";
 import { Header } from "@/components/layout/Header";
 import { Board } from "@/components/board/Board";
 import { TaskForm } from "@/components/task/TaskForm";
 import { TaskDetailSheet } from "@/components/task/TaskDetailSheet";
 import { TeamPanel } from "@/components/team/TeamPanel";
 import { TeamConnectDialog } from "@/components/team/TeamConnectDialog";
-import type { Task, ColumnId, Priority, TaskType, FileContext, RefType } from "@/types/board";
+import { QuestionsPanel } from "@/components/questions/QuestionsPanel";
+import type {
+  Task,
+  Budget,
+  Validation,
+  ColumnId,
+  Priority,
+  TaskType,
+  FileContext,
+  RefType,
+} from "@/types/board";
 import type { PendingRef } from "@/components/task/TaskForm";
 
 function App() {
@@ -22,6 +33,7 @@ function App() {
     addComment,
     addRef,
     removeRef,
+    answerQuestion,
     getTasksByColumn,
   } = useBoard();
 
@@ -80,6 +92,7 @@ function App() {
       type: TaskType;
       tags: string[];
       assignee?: string;
+      budget?: Budget;
       pendingRefs?: PendingRef[];
     }) => {
       const { pendingRefs, ...taskData } = data;
@@ -113,9 +126,7 @@ function App() {
     async (taskId: string, text: string) => {
       const comment = await addComment(taskId, { author: "User", text });
       if (detailTask?.id === taskId) {
-        setDetailTask((prev) =>
-          prev ? { ...prev, comments: [...prev.comments, comment] } : prev
-        );
+        setDetailTask((prev) => (prev ? { ...prev, comments: [...prev.comments, comment] } : prev));
       }
       toast.success("Comment added");
     },
@@ -156,6 +167,61 @@ function App() {
     [removeRef, detailTask]
   );
 
+  const handleAnswerQuestion = useCallback(
+    async (taskId: string, questionId: string, answer: string) => {
+      const updated = await answerQuestion(taskId, questionId, answer);
+      if (detailTask?.id === taskId) {
+        setDetailTask((prev) =>
+          prev
+            ? {
+                ...prev,
+                questions: (prev.questions ?? []).map((q) =>
+                  q.id === questionId
+                    ? { ...q, answer: updated.answer, answeredAt: updated.answeredAt }
+                    : q
+                ),
+              }
+            : prev
+        );
+      }
+      toast.success("Question answered");
+    },
+    [answerQuestion, detailTask]
+  );
+
+  const handleUpdateBudget = useCallback(
+    async (taskId: string, budget: Budget | undefined) => {
+      const updated = await updateTask(taskId, { budget });
+      if (detailTask?.id === taskId) {
+        setDetailTask(updated);
+      }
+      toast.success("Budget updated");
+    },
+    [updateTask, detailTask]
+  );
+
+  const handleMerge = useCallback(async (taskId: string) => {
+    try {
+      await api.mergeTask(taskId);
+      toast.success("Merged to main");
+      setDetailOpen(false);
+      setDetailTask(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Merge failed");
+    }
+  }, []);
+
+  const handleRequestChanges = useCallback(async (taskId: string, feedback: string) => {
+    try {
+      await api.requestChanges(taskId, feedback);
+      toast.success("Changes requested — task moved to in-progress");
+      setDetailOpen(false);
+      setDetailTask(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to request changes");
+    }
+  }, []);
+
   const handleTeamClick = useCallback(() => {
     if (teamConnected) {
       setTeamPanelOpen((prev) => !prev);
@@ -165,7 +231,14 @@ function App() {
   }, [teamConnected]);
 
   const handleTeamConnect = useCallback(
-    async (config: { teamName: string; projectDir: string; model?: string; workerModel?: string; maxTurns?: number }) => {
+    async (config: {
+      teamName: string;
+      projectDir: string;
+      model?: string;
+      workerModel?: string;
+      maxTurns?: number;
+      validation?: Validation;
+    }) => {
       await connectTeam(config);
       setTeamPanelOpen(true);
     },
@@ -176,6 +249,17 @@ function App() {
     await disconnectTeam();
     setTeamPanelOpen(false);
   }, [disconnectTeam]);
+
+  const reviewRequiredTasks = (board?.tasks ?? []).filter(
+    (t) => t.column === "review" && t.tags.includes("review-required")
+  );
+
+  const handleReviewClick = useCallback(() => {
+    if (reviewRequiredTasks.length > 0) {
+      setDetailTask(reviewRequiredTasks[0]);
+      setDetailOpen(true);
+    }
+  }, [reviewRequiredTasks]);
 
   if (loading) {
     return (
@@ -193,7 +277,9 @@ function App() {
         teamConnected={teamConnected}
         teamRunning={teamRunning}
         teamName={teamConfig?.teamName}
+        reviewCount={reviewRequiredTasks.length}
         onTeamClick={handleTeamClick}
+        onReviewClick={handleReviewClick}
       />
       {teamConnected && teamConfig && teamPanelOpen && (
         <TeamPanel
@@ -207,6 +293,11 @@ function App() {
           onDisconnect={handleTeamDisconnect}
         />
       )}
+      <QuestionsPanel
+        tasks={board?.tasks ?? []}
+        onAnswer={handleAnswerQuestion}
+        onTaskClick={handleClickTask}
+      />
       <Board
         tasks={board?.tasks ?? []}
         getTasksByColumn={getTasksByColumn}
@@ -233,6 +324,10 @@ function App() {
         onUpdateContext={handleUpdateContext}
         onAddRef={handleAddRef}
         onRemoveRef={handleRemoveRef}
+        onAnswerQuestion={handleAnswerQuestion}
+        onUpdateBudget={handleUpdateBudget}
+        onMerge={handleMerge}
+        onRequestChanges={handleRequestChanges}
         onDelete={handleDeleteTask}
       />
       <TeamConnectDialog

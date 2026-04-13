@@ -1,6 +1,16 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GitBranch, GripVertical, MoreHorizontal, Pencil, Trash2, MessageSquare, FileCode2, Link2 } from "lucide-react";
+import {
+  GitBranch,
+  GripVertical,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  MessageSquare,
+  FileCode2,
+  Link2,
+  HelpCircle,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -20,14 +30,9 @@ interface TaskCardProps {
 }
 
 export function TaskCard({ task, onEdit, onDelete, onClick }: TaskCardProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: task.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: task.id,
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -56,9 +61,7 @@ export function TaskCard({ task, onEdit, onDelete, onClick }: TaskCardProps) {
         </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <p className="text-sm font-medium leading-tight truncate">
-              {task.title}
-            </p>
+            <p className="text-sm font-medium leading-tight truncate">{task.title}</p>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -93,21 +96,19 @@ export function TaskCard({ task, onEdit, onDelete, onClick }: TaskCardProps) {
             </DropdownMenu>
           </div>
           {task.description && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-              {task.description}
-            </p>
+            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{task.description}</p>
           )}
           <div className="flex items-center gap-2 mt-2 flex-wrap">
             {task.type && task.type !== "task" && (
-              <span className={`text-xs font-medium ${TASK_TYPE_CONFIG[task.type]?.color ?? "text-zinc-400"}`}>
+              <span
+                className={`text-xs font-medium ${TASK_TYPE_CONFIG[task.type]?.color ?? "text-zinc-400"}`}
+              >
                 {TASK_TYPE_CONFIG[task.type]?.label ?? task.type}
               </span>
             )}
             <div className="flex items-center gap-1">
               <div className={`size-2 rounded-full ${priority.dotColor}`} />
-              <span className={`text-xs ${priority.color}`}>
-                {priority.label}
-              </span>
+              <span className={`text-xs ${priority.color}`}>{priority.label}</span>
             </div>
             {task.tags.map((tag) => (
               <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0">
@@ -115,7 +116,12 @@ export function TaskCard({ task, onEdit, onDelete, onClick }: TaskCardProps) {
               </Badge>
             ))}
           </div>
-          {(task.comments.length > 0 || task.context.length > 0 || (task.refs ?? []).length > 0 || task.assignee || task.branch) && (
+          {(task.comments.length > 0 ||
+            task.context.length > 0 ||
+            (task.refs ?? []).length > 0 ||
+            (task.questions ?? []).length > 0 ||
+            task.assignee ||
+            task.branch) && (
             <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
               {task.assignee && (
                 <span className="flex items-center gap-1">
@@ -137,6 +143,15 @@ export function TaskCard({ task, onEdit, onDelete, onClick }: TaskCardProps) {
                   {task.refs.length}
                 </span>
               )}
+              {(() => {
+                const unanswered = (task.questions ?? []).filter((q) => !q.answer).length;
+                return unanswered > 0 ? (
+                  <span className="flex items-center gap-1 text-amber-500">
+                    <HelpCircle className="size-3" />
+                    {unanswered}
+                  </span>
+                ) : null;
+              })()}
               {task.context.length > 0 && (
                 <span className="flex items-center gap-1">
                   <FileCode2 className="size-3" />

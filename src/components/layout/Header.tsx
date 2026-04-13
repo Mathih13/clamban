@@ -1,5 +1,6 @@
-import { Plus, LayoutDashboard, Users } from "lucide-react";
+import { GitPullRequest, LayoutDashboard, Plus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 interface HeaderProps {
   onNewTask: () => void;
@@ -7,7 +8,9 @@ interface HeaderProps {
   teamConnected?: boolean;
   teamRunning?: boolean;
   teamName?: string;
+  reviewCount?: number;
   onTeamClick?: () => void;
+  onReviewClick?: () => void;
 }
 
 export function Header({
@@ -16,7 +19,9 @@ export function Header({
   teamConnected,
   teamRunning,
   teamName,
+  reviewCount = 0,
   onTeamClick,
+  onReviewClick,
 }: HeaderProps) {
   return (
     <header className="border-b bg-card px-6 py-3 flex items-center justify-between shrink-0">
@@ -28,13 +33,24 @@ export function Header({
         </span>
       </div>
       <div className="flex items-center gap-2">
-        {teamConnected ? (
+        {reviewCount > 0 && (
           <Button
             size="sm"
             variant="ghost"
-            onClick={onTeamClick}
-            className="gap-1.5"
+            onClick={onReviewClick}
+            className="gap-1.5 text-green-500"
           >
+            <GitPullRequest className="size-4" />
+            <Badge
+              variant="secondary"
+              className="text-[10px] px-1.5 py-0 bg-green-500/20 text-green-500"
+            >
+              {reviewCount}
+            </Badge>
+          </Button>
+        )}
+        {teamConnected ? (
+          <Button size="sm" variant="ghost" onClick={onTeamClick} className="gap-1.5">
             <div className="relative">
               <Users className="size-4" />
               <div

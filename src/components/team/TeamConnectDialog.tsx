@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/api-client";
+import type { Validation } from "@/types/board";
 
 interface TeamConnectDialogProps {
   open: boolean;
@@ -28,19 +29,20 @@ interface TeamConnectDialogProps {
     model?: string;
     workerModel?: string;
     maxTurns?: number;
+    validation?: Validation;
   }) => void;
 }
 
-export function TeamConnectDialog({
-  open,
-  onOpenChange,
-  onConnect,
-}: TeamConnectDialogProps) {
+export function TeamConnectDialog({ open, onOpenChange, onConnect }: TeamConnectDialogProps) {
   const [availableTeams, setAvailableTeams] = useState<string[]>([]);
   const [teamName, setTeamName] = useState("");
   const [projectDir, setProjectDir] = useState("");
   const [model, setModel] = useState("sonnet");
   const [workerModel, setWorkerModel] = useState("sonnet");
+  const [buildCommand, setBuildCommand] = useState("");
+  const [testCommand, setTestCommand] = useState("");
+  const [typecheckCommand, setTypecheckCommand] = useState("");
+  const [lintCommand, setLintCommand] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -56,7 +58,21 @@ export function TeamConnectDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!teamName.trim() || !projectDir.trim()) return;
-    onConnect({ teamName: teamName.trim(), projectDir: projectDir.trim(), model, workerModel });
+
+    const validation: Validation = {};
+    if (buildCommand.trim()) validation.build = buildCommand.trim();
+    if (testCommand.trim()) validation.test = testCommand.trim();
+    if (typecheckCommand.trim()) validation.typecheck = typecheckCommand.trim();
+    if (lintCommand.trim()) validation.lint = lintCommand.trim();
+    const hasAnyValidation = Object.keys(validation).length > 0;
+
+    onConnect({
+      teamName: teamName.trim(),
+      projectDir: projectDir.trim(),
+      model,
+      workerModel,
+      validation: hasAnyValidation ? validation : undefined,
+    });
     onOpenChange(false);
   }
 
@@ -66,9 +82,7 @@ export function TeamConnectDialog({
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>Connect Team</DialogTitle>
-            <DialogDescription>
-              Link a Claude Code team to this board.
-            </DialogDescription>
+            <DialogDescription>Link a Claude Code team to this board.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -130,12 +144,34 @@ export function TeamConnectDialog({
                 </SelectContent>
               </Select>
             </div>
+            <div className="grid gap-2">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                Validation Commands (optional)
+              </Label>
+              <Input
+                value={buildCommand}
+                onChange={(e) => setBuildCommand(e.target.value)}
+                placeholder="Build:  bun run build"
+              />
+              <Input
+                value={testCommand}
+                onChange={(e) => setTestCommand(e.target.value)}
+                placeholder="Test:  bun test"
+              />
+              <Input
+                value={typecheckCommand}
+                onChange={(e) => setTypecheckCommand(e.target.value)}
+                placeholder="Typecheck:  bunx tsc --noEmit"
+              />
+              <Input
+                value={lintCommand}
+                onChange={(e) => setLintCommand(e.target.value)}
+                placeholder="Lint:  bun run lint"
+              />
+            </div>
           </div>
           <DialogFooter>
-            <Button
-              type="submit"
-              disabled={!teamName.trim() || !projectDir.trim()}
-            >
+            <Button type="submit" disabled={!teamName.trim() || !projectDir.trim()}>
               Connect
             </Button>
           </DialogFooter>

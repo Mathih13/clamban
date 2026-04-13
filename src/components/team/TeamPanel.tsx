@@ -106,6 +106,7 @@ export function TeamPanel({
                     key={m.name}
                     name={m.name}
                     status={m.status}
+                    model={m.model}
                     currentTaskTitle={getTaskTitle(m.currentTask)}
                   />
                 ))}
