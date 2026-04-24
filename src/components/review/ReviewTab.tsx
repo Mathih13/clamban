@@ -113,7 +113,7 @@ export function ReviewTab({ taskId, branch, comments, onMerge, onRequestChanges 
       {diff !== null && !loading && <DiffViewer diff={diff} />}
 
       {/* Actions */}
-      <div className="flex items-center gap-2 pt-2 border-t">
+      <div className="sticky bottom-0 flex items-center gap-2 pt-2 pb-1 border-t bg-background z-10">
         <Button
           onClick={handleMerge}
           disabled={merging || validationStatus === "failed"}

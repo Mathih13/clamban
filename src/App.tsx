@@ -13,6 +13,7 @@ import { QuestionsPanel } from "@/components/questions/QuestionsPanel";
 import type {
   Task,
   Budget,
+  RepoConfig,
   Validation,
   ColumnId,
   Priority,
@@ -47,6 +48,7 @@ function App() {
     disconnect: disconnectTeam,
     start: startTeam,
     stop: stopTeam,
+    updateConfig: updateTeamConfig,
   } = useTeam();
 
   const [formOpen, setFormOpen] = useState(false);
@@ -200,6 +202,16 @@ function App() {
     [updateTask, detailTask]
   );
 
+  const handleUpdateRepo = useCallback(
+    async (taskId: string, repo: string | undefined) => {
+      const updated = await updateTask(taskId, { repo });
+      if (detailTask?.id === taskId) {
+        setDetailTask(updated);
+      }
+    },
+    [updateTask, detailTask]
+  );
+
   const handleMerge = useCallback(async (taskId: string) => {
     try {
       await api.mergeTask(taskId);
@@ -233,7 +245,7 @@ function App() {
   const handleTeamConnect = useCallback(
     async (config: {
       teamName: string;
-      projectDir: string;
+      repos: RepoConfig[];
       model?: string;
       workerModel?: string;
       maxTurns?: number;
@@ -291,6 +303,7 @@ function App() {
           onStart={startTeam}
           onStop={stopTeam}
           onDisconnect={handleTeamDisconnect}
+          onUpdateConfig={updateTeamConfig}
         />
       )}
       <QuestionsPanel
@@ -329,6 +342,8 @@ function App() {
         onMerge={handleMerge}
         onRequestChanges={handleRequestChanges}
         onDelete={handleDeleteTask}
+        availableRepos={teamConfig?.repos}
+        onUpdateRepo={handleUpdateRepo}
       />
       <TeamConnectDialog
         open={connectDialogOpen}

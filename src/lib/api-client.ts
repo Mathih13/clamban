@@ -4,6 +4,7 @@ import type {
   Comment,
   Question,
   TeamConfig,
+  RepoConfig,
   Validation,
   RefType,
 } from "@/types/board";
@@ -77,7 +78,8 @@ export const api = {
 
   connectTeam: (config: {
     teamName: string;
-    projectDir: string;
+    projectDir?: string;
+    repos?: RepoConfig[];
     model?: string;
     workerModel?: string;
     maxTurns?: number;
@@ -86,6 +88,12 @@ export const api = {
     request<{ ok: boolean; config: TeamConfig }>("/team/connect", {
       method: "POST",
       body: JSON.stringify(config),
+    }),
+
+  updateTeamConfig: (updates: Partial<TeamConfig>) =>
+    request<{ ok: boolean; config: TeamConfig }>("/team/config", {
+      method: "PATCH",
+      body: JSON.stringify(updates),
     }),
 
   disconnectTeam: () => request<{ ok: boolean }>("/team/disconnect", { method: "POST" }),

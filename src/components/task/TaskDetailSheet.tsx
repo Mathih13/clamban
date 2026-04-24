@@ -1,7 +1,7 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { formatDistanceToNow } from "date-fns";
-import { Check, Clock, GitBranch, Pencil, Timer, Trash2, X } from "lucide-react";
+import { Check, Clock, GitBranch, GitFork, Pencil, Timer, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,13 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { PRIORITY_CONFIG, COLUMNS, TASK_TYPE_CONFIG } from "@/lib/constants";
@@ -20,7 +27,7 @@ import { FileContextList } from "./FileContextList";
 import { QuestionThread } from "./QuestionThread";
 import { TaskRefList } from "./TaskRefList";
 import { ReviewTab } from "@/components/review/ReviewTab";
-import type { Task, Budget, FileContext, RefType } from "@/types/board";
+import type { Task, Budget, FileContext, RefType, RepoConfig } from "@/types/board";
 
 interface TaskDetailSheetProps {
   task: Task | null;
@@ -36,6 +43,8 @@ interface TaskDetailSheetProps {
   onMerge: (taskId: string) => void;
   onRequestChanges: (taskId: string, feedback: string) => void;
   onDelete: (id: string) => void;
+  availableRepos?: RepoConfig[];
+  onUpdateRepo: (taskId: string, repo: string | undefined) => void;
 }
 
 export function TaskDetailSheet({
@@ -52,6 +61,8 @@ export function TaskDetailSheet({
   onMerge,
   onRequestChanges,
   onDelete,
+  availableRepos,
+  onUpdateRepo,
 }: TaskDetailSheetProps) {
   const [editingBudget, setEditingBudget] = useState(false);
   const [draftTurns, setDraftTurns] = useState("");
@@ -137,6 +148,27 @@ export function TaskDetailSheet({
               {task.branch}
             </Badge>
           )}
+          {availableRepos && availableRepos.length > 1 && (
+            <Select
+              value={task.repo ?? "_default"}
+              onValueChange={(v) => onUpdateRepo(task.id, v === "_default" ? undefined : v)}
+            >
+              <SelectTrigger className="h-6 text-xs px-2 gap-1 w-auto border-dashed">
+                <GitFork className="size-3" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_default">
+                  {availableRepos[0].name} (default)
+                </SelectItem>
+                {availableRepos.slice(1).map((r) => (
+                  <SelectItem key={r.name} value={r.name}>
+                    {r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           {task.tags.map((tag) => (
             <Badge key={tag} variant="secondary" className="text-xs">
               {tag}
@@ -177,9 +209,9 @@ export function TaskDetailSheet({
           ) : (
             <>
               <Timer className="size-3" />
-              <span>{task.budget?.turns ?? 50}t</span>
+              <span>{task.budget?.turns ?? 200}t</span>
               <Clock className="size-3 ml-1" />
-              <span>{task.budget?.wallClockMinutes ?? 30}m</span>
+              <span>{task.budget?.wallClockMinutes ?? 120}m</span>
               {!task.budget && <span className="text-muted-foreground/60 italic">(default)</span>}
               <Button size="icon" variant="ghost" className="size-6" onClick={startEditBudget}>
                 <Pencil className="size-3 text-muted-foreground" />

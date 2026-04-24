@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { execSync } from "child_process";
 import path from "path";
 import { readBoard, writeBoardSync, setActiveTeam, getActiveTeam } from "./board-store";
-import type { Task, Comment, Question, TeamConfig, RefType } from "../types/board";
+import type { Task, Comment, Question, TeamConfig, RepoConfig, RefType } from "../types/board";
+import { resolveRepoPath } from "./team-manager";
 import {
   getTeamState,
   startTeam,
@@ -15,6 +16,7 @@ import {
   spawnWorker,
   killWorker,
   listRunningWorkers,
+  getTokenLedger,
 } from "./team-manager";
 
 let serverPort = 5173; // default, updated by api-plugin
@@ -202,6 +204,7 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
       "assignee",
       "branch",
       "budget",
+      "repo",
     ] as const;
     for (const key of updatable) {
       if (key in body) {
@@ -276,9 +279,9 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
       return true;
     }
 
-    const projectDir = board.meta.team?.projectDir;
+    const teamCfg = board.meta.team;
 
-    // Reject absolute paths — all paths must be relative to projectDir
+    // Reject absolute paths — all paths must be relative to a repo root
     if (path.isAbsolute(rawPath)) {
       json(res, 400, {
         error: "Absolute paths are not allowed; use a path relative to projectDir",
@@ -286,18 +289,20 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
       return true;
     }
 
-    if (!projectDir) {
-      json(res, 400, { error: "No projectDir configured; connect a team first" });
+    if (!teamCfg) {
+      json(res, 400, { error: "No team configured; connect a team first" });
       return true;
     }
 
-    // Resolve and verify the path stays within projectDir
-    const filePath = path.resolve(projectDir, rawPath);
-    if (
-      !filePath.startsWith(path.resolve(projectDir) + path.sep) &&
-      filePath !== path.resolve(projectDir)
-    ) {
-      json(res, 400, { error: "Path escapes projectDir" });
+    // Resolve and verify the path stays within at least one configured repo
+    const repoPaths = teamCfg.repos?.map((r) => r.path) ?? [teamCfg.projectDir];
+    const filePath = path.resolve(repoPaths[0], rawPath);
+    const isAllowed = repoPaths.some(
+      (dir) =>
+        filePath.startsWith(path.resolve(dir) + path.sep) || filePath === path.resolve(dir)
+    );
+    if (!isAllowed) {
+      json(res, 400, { error: "Path escapes all configured repos" });
       return true;
     }
 
@@ -490,6 +495,47 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
     return true;
   }
 
+  // GET /api/tasks/:id/questions/:questionId/wait?timeout=N — long-poll until answered
+  const questionWaitMatch = parsedUrl.pathname.match(
+    /^\/api\/tasks\/([^/]+)\/questions\/([^/]+)\/wait$/
+  );
+  if (method === "GET" && questionWaitMatch) {
+    const id = questionWaitMatch[1];
+    const qid = questionWaitMatch[2];
+    const timeoutSec = Math.min(
+      parseInt(parsedUrl.searchParams.get("timeout") || "300", 10),
+      600
+    );
+    const deadline = Date.now() + timeoutSec * 1000;
+    const pollInterval = setInterval(() => {
+      try {
+        const board = readBoard();
+        const task = board.tasks.find((t) => t.id === id);
+        const question = task?.questions?.find((q) => q.id === qid);
+        if (!question) {
+          clearInterval(pollInterval);
+          json(res, 404, { error: "Question not found" });
+          return;
+        }
+        if (question.answer) {
+          clearInterval(pollInterval);
+          json(res, 200, question);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          clearInterval(pollInterval);
+          json(res, 200, { ...question, timeout: true });
+          return;
+        }
+      } catch {
+        clearInterval(pollInterval);
+        json(res, 500, { error: "Internal error during poll" });
+      }
+    }, 2000);
+    req.on("close", () => clearInterval(pollInterval));
+    return true;
+  }
+
   // GET /api/questions/pending — all unanswered questions across tasks
   if (method === "GET" && parsedUrl.pathname === "/api/questions/pending") {
     const board = readBoard();
@@ -521,17 +567,12 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
     }
     const workerName = body.name as string;
     const taskId = body.taskId as string;
-    const mode = (body.mode as "plan" | "build") || "plan";
     if (!workerName || !taskId) {
       json(res, 400, { error: "name and taskId are required" });
       return true;
     }
-    if (mode !== "plan" && mode !== "build") {
-      json(res, 400, { error: 'mode must be "plan" or "build"' });
-      return true;
-    }
     try {
-      const result = spawnWorker(board.meta.team, workerName, taskId, serverPort, mode);
+      const result = spawnWorker(board.meta.team, workerName, taskId, serverPort);
       json(res, 201, { ok: true, ...result });
     } catch (err) {
       json(res, 409, {
@@ -578,11 +619,11 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
       json(res, 404, { error: "Task has no branch" });
       return true;
     }
-    const projectDir = board.meta.team?.projectDir;
-    if (!projectDir) {
+    if (!board.meta.team) {
       json(res, 400, { error: "No team connected" });
       return true;
     }
+    const projectDir = resolveRepoPath(board.meta.team, task.repo);
 
     try {
       const diff = execSync(`git diff main...${task.branch}`, {
@@ -628,13 +669,16 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
       json(res, 400, { error: "Task has no branch" });
       return true;
     }
-    const projectDir = board.meta.team?.projectDir;
-    if (!projectDir) {
+    if (!board.meta.team) {
       json(res, 400, { error: "No team connected" });
       return true;
     }
+    const projectDir = resolveRepoPath(board.meta.team, task.repo);
 
     try {
+      // Abort any in-progress merge before attempting (e.g. leftover MERGE_HEAD from prior conflict)
+      try { execSync("git merge --abort", { cwd: projectDir, stdio: "pipe" }); } catch {}
+
       execSync(`git merge ${task.branch} --no-edit`, {
         cwd: projectDir,
         stdio: "pipe",
@@ -744,10 +788,24 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
       maxTurns: (body.maxTurns as number) || 1000,
       defaultBudget: (body.defaultBudget as TeamConfig["defaultBudget"]) || undefined,
       validation: (body.validation as TeamConfig["validation"]) || undefined,
+      codeRabbit: (body.codeRabbit as boolean) || false,
+      members: Array.isArray(body.members) ? (body.members as string[]) : undefined,
     };
 
+    const repos = body.repos as RepoConfig[] | undefined;
+    if (Array.isArray(repos) && repos.length > 0) {
+      for (const r of repos) {
+        if (!r.name || !r.path) {
+          json(res, 400, { error: "Each repo entry must have name and path" });
+          return true;
+        }
+      }
+      teamConfig.repos = repos;
+      teamConfig.projectDir = repos[0].path;
+    }
+
     if (!teamConfig.teamName || !teamConfig.projectDir) {
-      json(res, 400, { error: "teamName and projectDir are required" });
+      json(res, 400, { error: "teamName and at least one repo are required" });
       return true;
     }
 
@@ -759,6 +817,23 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
     writeBoardSync(board);
     teamChangedCallback?.();
     json(res, 200, { ok: true, config: teamConfig });
+    return true;
+  }
+
+  // PATCH /api/team/config — update mutable team config fields (members, etc.)
+  if (method === "PATCH" && url === "/api/team/config") {
+    const body = await parseBody(req);
+    const board = readBoard();
+    if (!board.meta.team) {
+      json(res, 400, { error: "No team connected" });
+      return true;
+    }
+    if (Array.isArray(body.members)) {
+      board.meta.team.members = body.members as string[];
+    }
+    writeBoardSync(board);
+    teamChangedCallback?.();
+    json(res, 200, { ok: true, config: board.meta.team });
     return true;
   }
 
@@ -848,6 +923,23 @@ export async function handleRoute(req: IncomingMessage, res: ServerResponse): Pr
     const lines = parseInt(parsedUrl.searchParams.get("lines") || "200", 10);
     const content = readLogTail(teamName, Math.min(lines, 2000));
     json(res, 200, { content });
+    return true;
+  }
+
+  // GET /api/team/token-summary — token accounting for the current session
+  if (method === "GET" && parsedUrl.pathname === "/api/team/token-summary") {
+    const ledger = getTokenLedger();
+    if (!ledger) {
+      json(res, 200, { error: "No active session" });
+      return true;
+    }
+    const taskId = parsedUrl.searchParams.get("taskId");
+    if (taskId) {
+      const cost = ledger.getTaskCost(taskId);
+      json(res, 200, cost ?? { error: "No data for task" });
+    } else {
+      json(res, 200, ledger.getSessionSummary());
+    }
     return true;
   }
 

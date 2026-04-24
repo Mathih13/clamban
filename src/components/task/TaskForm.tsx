@@ -276,7 +276,7 @@ export function TaskForm({
                   min="1"
                   value={budgetTurns}
                   onChange={(e) => setBudgetTurns(e.target.value)}
-                  placeholder="50 (default)"
+                  placeholder="200 (default)"
                 />
               </div>
               <div className="grid gap-2">
@@ -287,7 +287,7 @@ export function TaskForm({
                   min="1"
                   value={budgetMinutes}
                   onChange={(e) => setBudgetMinutes(e.target.value)}
-                  placeholder="30 (default)"
+                  placeholder="120 (default)"
                 />
               </div>
             </div>

@@ -66,18 +66,28 @@ export interface Task {
   budget?: Budget;
   assignee?: string;
   branch?: string;
+  repo?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RepoConfig {
+  name: string;
+  path: string;
+  validation?: Validation;
 }
 
 export interface TeamConfig {
   teamName: string;
   projectDir: string;
+  repos?: RepoConfig[];
   model?: string;
   workerModel?: string;
   maxTurns?: number;
   defaultBudget?: Budget;
   validation?: Validation;
+  codeRabbit?: boolean;
+  members?: string[];
 }
 
 export interface BoardMeta {

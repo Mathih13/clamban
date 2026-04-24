@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api, type TeamResponse } from "@/lib/api-client";
-import type { Validation } from "@/types/board";
+import type { RepoConfig, TeamConfig, Validation } from "@/types/board";
 import { toast } from "sonner";
 
 export function useTeam() {
@@ -44,7 +44,8 @@ export function useTeam() {
   const connect = useCallback(
     async (config: {
       teamName: string;
-      projectDir: string;
+      projectDir?: string;
+      repos?: RepoConfig[];
       model?: string;
       workerModel?: string;
       maxTurns?: number;
@@ -75,6 +76,14 @@ export function useTeam() {
     toast.success("Team stopped");
   }, [fetchTeam]);
 
+  const updateConfig = useCallback(
+    async (updates: Partial<TeamConfig>) => {
+      await api.updateTeamConfig(updates);
+      await fetchTeam();
+    },
+    [fetchTeam]
+  );
+
   const memberNames = team?.state?.members?.map((m) => m.name) ?? [];
 
   return {
@@ -89,6 +98,7 @@ export function useTeam() {
     disconnect,
     start,
     stop,
+    updateConfig,
     refetch: fetchTeam,
   };
 }
