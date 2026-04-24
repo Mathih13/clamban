@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,27 +19,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/api-client";
-import type { Validation } from "@/types/board";
+import type { RepoConfig, Validation } from "@/types/board";
 
 interface TeamConnectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnect: (config: {
     teamName: string;
-    projectDir: string;
+    repos: RepoConfig[];
     model?: string;
     workerModel?: string;
     maxTurns?: number;
     validation?: Validation;
+    codeRabbit?: boolean;
   }) => void;
 }
 
 export function TeamConnectDialog({ open, onOpenChange, onConnect }: TeamConnectDialogProps) {
   const [availableTeams, setAvailableTeams] = useState<string[]>([]);
   const [teamName, setTeamName] = useState("");
-  const [projectDir, setProjectDir] = useState("");
+  const [repos, setRepos] = useState<Array<{ name: string; path: string }>>([
+    { name: "", path: "" },
+  ]);
   const [model, setModel] = useState("haiku");
   const [workerModel, setWorkerModel] = useState("sonnet");
+  const [codeRabbit, setCodeRabbit] = useState(false);
   const [buildCommand, setBuildCommand] = useState("");
   const [testCommand, setTestCommand] = useState("");
   const [typecheckCommand, setTypecheckCommand] = useState("");
@@ -57,7 +62,8 @@ export function TeamConnectDialog({ open, onOpenChange, onConnect }: TeamConnect
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!teamName.trim() || !projectDir.trim()) return;
+    const validRepos = repos.filter((r) => r.name.trim() && r.path.trim());
+    if (!teamName.trim() || validRepos.length === 0) return;
 
     const validation: Validation = {};
     if (buildCommand.trim()) validation.build = buildCommand.trim();
@@ -68,13 +74,16 @@ export function TeamConnectDialog({ open, onOpenChange, onConnect }: TeamConnect
 
     onConnect({
       teamName: teamName.trim(),
-      projectDir: projectDir.trim(),
+      repos: validRepos.map((r) => ({ name: r.name.trim(), path: r.path.trim() })),
       model,
       workerModel,
       validation: hasAnyValidation ? validation : undefined,
+      codeRabbit,
     });
     onOpenChange(false);
   }
+
+  const hasValidRepo = repos.some((r) => r.name.trim() && r.path.trim());
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -110,13 +119,54 @@ export function TeamConnectDialog({ open, onOpenChange, onConnect }: TeamConnect
               )}
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="projectDir">Project Directory</Label>
-              <Input
-                id="projectDir"
-                value={projectDir}
-                onChange={(e) => setProjectDir(e.target.value)}
-                placeholder="/path/to/project"
-              />
+              <div className="flex items-center justify-between">
+                <Label>Repos</Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-xs"
+                  onClick={() => setRepos((p) => [...p, { name: "", path: "" }])}
+                >
+                  + Add
+                </Button>
+              </div>
+              {repos.map((repo, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <Input
+                    value={repo.name}
+                    placeholder={i === 0 ? "frontend" : "backend"}
+                    className="w-28"
+                    onChange={(e) =>
+                      setRepos((p) =>
+                        p.map((r, j) => (j === i ? { ...r, name: e.target.value } : r))
+                      )
+                    }
+                  />
+                  <Input
+                    value={repo.path}
+                    placeholder="/path/to/repo"
+                    className="flex-1"
+                    onChange={(e) =>
+                      setRepos((p) =>
+                        p.map((r, j) => (j === i ? { ...r, path: e.target.value } : r))
+                      )
+                    }
+                  />
+                  {repos.length > 1 && (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-6 shrink-0"
+                      onClick={() => setRepos((p) => p.filter((_, j) => j !== i))}
+                    >
+                      <X className="size-3" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+              <p className="text-xs text-muted-foreground">First repo is the default.</p>
             </div>
             <div className="grid gap-2">
               <Label>Lead Model</Label>
@@ -143,6 +193,18 @@ export function TeamConnectDialog({ open, onOpenChange, onConnect }: TeamConnect
                   <SelectItem value="haiku">Haiku</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                id="codeRabbit"
+                type="checkbox"
+                checked={codeRabbit}
+                onChange={(e) => setCodeRabbit(e.target.checked)}
+                className="size-4"
+              />
+              <Label htmlFor="codeRabbit" className="font-normal cursor-pointer">
+                Enable CodeRabbit review
+              </Label>
             </div>
             <div className="grid gap-2">
               <Label className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -171,7 +233,7 @@ export function TeamConnectDialog({ open, onOpenChange, onConnect }: TeamConnect
             </div>
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={!teamName.trim() || !projectDir.trim()}>
+            <Button type="submit" disabled={!teamName.trim() || !hasValidRepo}>
               Connect
             </Button>
           </DialogFooter>

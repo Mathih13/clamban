@@ -25,6 +25,7 @@ export interface WorkerProcess {
   taskId: string;
   branch: string;
   worktreePath: string;
+  repoPath: string;
   startedAt: string;
   logPath: string;
   lastEventAt: number;
